@@ -40,7 +40,6 @@ setup(
             "pyflakes==0.8.1",
             "pylint==1.5.1",
             "pytest==2.9.1",
-            "pytest-cov==2.1.0",
             "pytest-timeout==0.4",
             "urllib3==1.10.2",
             "websocket-client==0.23.0",
