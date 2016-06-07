@@ -4,6 +4,7 @@ Provides core messaging decorators and dependency providers.
 from __future__ import absolute_import
 
 import socket
+import sys
 from functools import partial
 from itertools import count
 from logging import getLogger
@@ -16,7 +17,7 @@ from kombu.common import maybe_declare
 from kombu.mixins import ConsumerMixin
 from kombu.pools import connections, producers
 
-from nameko.amqp import verify_amqp_uri
+from nameko.amqp import Backoff, BackoffPublisher, verify_amqp_uri
 from nameko.constants import (
     AMQP_URI_CONFIG_KEY, DEFAULT_RETRY_POLICY, DEFAULT_SERIALIZER,
     SERIALIZER_CONFIG_KEY)
@@ -418,6 +419,7 @@ class QueueConsumer(SharedExtension, ProviderCollector, ConsumerMixin):
 class Consumer(Entrypoint, HeaderDecoder):
 
     queue_consumer = QueueConsumer()
+    backoff_publisher = BackoffPublisher()
 
     def __init__(self, queue, requeue_on_error=False):
         """
@@ -472,6 +474,16 @@ class Consumer(Entrypoint, HeaderDecoder):
             self.queue_consumer.requeue_message(message)
 
     def handle_result(self, message, worker_ctx, result=None, exc_info=None):
+
+        if exc_info is not None:
+            exc_type = exc_info[0]
+            if issubclass(exc_type, Backoff):
+                try:
+                    self.backoff_publisher.republish(exc_type, message)
+                except Backoff.Expired:
+                    exc_info = sys.exc_info()
+                    result = None
+
         self.handle_message_processed(message, result, exc_info)
         return result, exc_info
 

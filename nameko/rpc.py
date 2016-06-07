@@ -6,18 +6,19 @@ import warnings
 from functools import partial
 from logging import getLogger
 
+import kombu.serialization
 from eventlet.event import Event
 from eventlet.queue import Empty
 from kombu import Connection, Exchange, Queue
 from kombu.pools import producers
-import kombu.serialization
 
+from nameko.amqp import Backoff, BackoffPublisher
 from nameko.constants import (
-    AMQP_URI_CONFIG_KEY, DEFAULT_RETRY_POLICY, RPC_EXCHANGE_CONFIG_KEY,
-    SERIALIZER_CONFIG_KEY, DEFAULT_SERIALIZER)
+    AMQP_URI_CONFIG_KEY, DEFAULT_RETRY_POLICY, DEFAULT_SERIALIZER,
+    RPC_EXCHANGE_CONFIG_KEY, SERIALIZER_CONFIG_KEY)
 from nameko.exceptions import (
-    ContainerBeingKilled, deserialize, MalformedRequest, MethodNotFound,
-    RpcConnectionError, serialize, UnknownService, UnserializableValueError)
+    ContainerBeingKilled, MalformedRequest, MethodNotFound, RpcConnectionError,
+    UnknownService, UnserializableValueError, deserialize, serialize)
 from nameko.extensions import (
     DependencyProvider, Entrypoint, ProviderCollector, SharedExtension)
 from nameko.messaging import HeaderDecoder, HeaderEncoder, QueueConsumer
@@ -38,6 +39,7 @@ def get_rpc_exchange(config):
 class RpcConsumer(SharedExtension, ProviderCollector):
 
     queue_consumer = QueueConsumer()
+    backoff_publisher = BackoffPublisher()
 
     def __init__(self):
         self._unregistering_providers = set()
@@ -114,6 +116,19 @@ class RpcConsumer(SharedExtension, ProviderCollector):
             self.handle_result(message, None, exc_info)
 
     def handle_result(self, message, result, exc_info):
+
+        if exc_info is not None:
+            exc_type = exc_info[0]
+            if issubclass(exc_type, Backoff):
+                try:
+                    self.backoff_publisher.republish(exc_type, message)
+                    self.queue_consumer.ack_message(message)
+                    return result, exc_info
+
+                except Backoff.Expired:
+                    exc_info = sys.exc_info()
+                    result = None
+
         responder = Responder(self.container.config, message)
         result, exc_info = responder.send_response(result, exc_info)
 
