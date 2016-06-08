@@ -24,7 +24,7 @@ BACKOFF_COUNT = 3
 
 @pytest.yield_fixture(autouse=True)
 def fast_backoff():
-    with patch.object(Backoff, 'schedule', new=[1.0]):
+    with patch.object(Backoff, 'schedule', new=[10.0]):
         yield
 
 
@@ -107,6 +107,24 @@ def counter():
         def count(self):
             self.value += 1
             return self.value
+
+    return Counter()
+
+
+@pytest.fixture
+def keyed_counter():
+
+    class Counter(object):
+
+        def __init__(self):
+            self.values = defaultdict(int)
+
+        def __getitem__(self, key):
+            return self.values[key]
+
+        def count(self, key):
+            self.values[key] += 1
+            return self.values[key]
 
     return Counter()
 
@@ -200,27 +218,94 @@ class TestRpc(object):
         ]
 
     def test_multiple_services(
-        self, rpc_proxy, wait_for_result, container,
-        container_factory, service_cls, rabbit_config
+        self, rpc_proxy, wait_for_result, keyed_counter,
+        container_factory, rabbit_config, entrypoint_tracker
     ):
 
-        class AnotherService(service_cls):
-            name = "another"
+        class ServiceOne(object):
+            name = "service_one"
 
-        another_container = container_factory(AnotherService, rabbit_config)
-        another_container.start()
+            @rpc
+            def method(self, payload):
+                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "one"
+
+        class ServiceTwo(object):
+            name = "service_two"
+
+            @rpc
+            def method(self, payload):
+                if keyed_counter.count("two") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "two"
+
+        container_one = container_factory(ServiceOne, rabbit_config)
+        container_one.start()
+        container_two = container_factory(ServiceTwo, rabbit_config)
+        container_two.start()
 
         with entrypoint_waiter(
-            container, 'method', callback=wait_for_result
+            container_one, 'method', callback=wait_for_result
         ) as result:
-            res = rpc_proxy.service.method("arg")
-        assert result.get() == res == "result"
+            res = rpc_proxy.service_one.method("arg")
+        assert result.get() == res == "one"
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "one"
+        ]
+        assert keyed_counter['one'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(
-            another_container, 'method', callback=wait_for_result
+            container_two, 'method', callback=wait_for_result
         ) as result:
-            res = rpc_proxy.another.method("arg")
-        assert result.get() == res == "result"
+            res = rpc_proxy.service_two.method("arg")
+        assert result.get() == res == "two"
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "one",
+            None, None, None, "two",
+        ]
+        assert keyed_counter['two'] == BACKOFF_COUNT + 1
+
+    def test_multiple_methods(
+        self, container_factory, rabbit_config, wait_for_result, rpc_proxy,
+        entrypoint_tracker, keyed_counter
+    ):
+
+        class Service(object):
+            name = "service"
+
+            @rpc
+            def a(self):
+                if keyed_counter.count("a") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "a"
+
+            @rpc
+            def b(self):
+                if keyed_counter.count("b") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "b"
+
+        container = container_factory(Service, rabbit_config)
+        container.start()
+
+        with entrypoint_waiter(container, 'a', callback=wait_for_result):
+            rpc_proxy.service.a()
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "a"
+        ]
+        assert keyed_counter['a'] == BACKOFF_COUNT + 1
+
+        with entrypoint_waiter(container, 'b', callback=wait_for_result):
+            rpc_proxy.service.b()
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "a",
+            None, None, None, "b",
+        ]
+        assert keyed_counter['b'] == BACKOFF_COUNT + 1
+
+    def test_queues_and_exchanges(self):
+        pass
 
 
 class TestEvents(object):
@@ -266,10 +351,107 @@ class TestEvents(object):
             (Backoff, ANY, ANY), (Backoff.Expired, ANY, ANY)
         ]
 
-    def test_multiple_services(self):
-        pass
+    def test_multiple_services(
+        self, dispatch_event, wait_for_result, container_factory,
+        rabbit_config, keyed_counter, entrypoint_tracker
+    ):
+        class ServiceOne(object):
+            name = "service_one"
 
-    def test_multiple_handlers(self):
+            @event_handler("src_service", "event_type")
+            def method(self, payload):
+                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "one"
+
+        class ServiceTwo(object):
+            name = "service_two"
+
+            @event_handler("src_service", "event_type")
+            def method(self, payload):
+                if keyed_counter.count("two") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "two"
+
+        container_one = container_factory(ServiceOne, rabbit_config)
+        container_one.start()
+        container_two = container_factory(ServiceTwo, rabbit_config)
+        container_two.start()
+
+        with entrypoint_waiter(
+            container_one, 'method', callback=wait_for_result
+        ) as result_one:
+
+            with entrypoint_waiter(
+                container_two, 'method', callback=wait_for_result
+            ) as result_two:
+
+                dispatch_event("src_service", "event_type", {})
+
+        assert result_one.get() == "one"
+        assert result_two.get() == "two"
+
+        assert keyed_counter['one'] == BACKOFF_COUNT + 1
+        assert keyed_counter['two'] == BACKOFF_COUNT + 1
+
+        results = entrypoint_tracker.get_results()
+        assert results[:6] == 6 * [None]
+        assert set(results[-2:]) == {"one", "two"}  # order not guaranteed
+
+    def test_multiple_handlers(
+        self, container_factory, rabbit_config, wait_for_result,
+        entrypoint_tracker, dispatch_event, keyed_counter
+    ):
+
+        class Service(object):
+            name = "service"
+
+            @event_handler("s1", "e1")
+            def a(self, payload):
+                if keyed_counter.count("a") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "a"
+
+            @event_handler("s1", "e2")
+            def b(self, payload):
+                if keyed_counter.count("b") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "b"
+
+            @event_handler("s2", "e1")
+            def c(self, payload):
+                if keyed_counter.count("c") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "c"
+
+        container = container_factory(Service, rabbit_config)
+        container.start()
+
+        with entrypoint_waiter(container, 'a', callback=wait_for_result):
+            dispatch_event('s1', 'e1', {})
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "a"
+        ]
+        assert keyed_counter['a'] == BACKOFF_COUNT + 1
+
+        with entrypoint_waiter(container, 'b', callback=wait_for_result):
+            dispatch_event('s1', 'e2', {})
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "a",
+            None, None, None, "b",
+        ]
+        assert keyed_counter['b'] == BACKOFF_COUNT + 1
+
+        with entrypoint_waiter(container, 'c', callback=wait_for_result):
+            dispatch_event('s2', 'e1', {})
+        assert entrypoint_tracker.get_results() == [
+            None, None, None, "a",
+            None, None, None, "b",
+            None, None, None, "c",
+        ]
+        assert keyed_counter['c'] == BACKOFF_COUNT + 1
+
+    def test_queues_and_exchanges(self):
         pass
 
 
@@ -327,6 +509,8 @@ class TestMessaging(object):
     def test_multiple_routing_keys(self):
         pass
 
+    def test_queues_and_exchanges(self):
+        pass
 
 # class TestMultipleEntrypoints(object):
 
