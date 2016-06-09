@@ -28,6 +28,7 @@ _log = getLogger(__name__)
 
 RPC_QUEUE_TEMPLATE = 'rpc-{}'
 RPC_REPLY_QUEUE_TEMPLATE = 'rpc.reply-{}-{}'
+RPC_METHOD_ID_HEADER_KEY = 'nameko.rpc_method_id'
 
 
 def get_rpc_exchange(config):
@@ -95,21 +96,26 @@ class RpcConsumer(SharedExtension, ProviderCollector):
         self._unregistered_from_queue_consumer.wait()
         super(RpcConsumer, self).unregister_provider(provider)
 
-    def get_provider_for_method(self, routing_key):
+    def get_provider_for_method(self, method_id):
         service_name = self.container.service_name
 
         for provider in self._providers:
             key = '{}.{}'.format(service_name, provider.method_name)
-            if key == routing_key:
+            if key == method_id:
                 return provider
         else:
-            method_name = routing_key.split(".")[-1]
+            method_name = method_id.split(".")[-1]
             raise MethodNotFound(method_name)
 
     def handle_message(self, body, message):
-        routing_key = message.delivery_info['routing_key']
+
+        # use the rpc_method_id if set, otherwise fall back to the routing key
+        method_id = message.headers.get('nameko.rpc_method_id')
+        if method_id is None:
+            method_id = message.delivery_info['routing_key']
+
         try:
-            provider = self.get_provider_for_method(routing_key)
+            provider = self.get_provider_for_method(method_id)
             provider.handle_message(body, message)
         except Exception:
             exc_info = sys.exc_info()
@@ -120,6 +126,13 @@ class RpcConsumer(SharedExtension, ProviderCollector):
         if exc_info is not None:
             exc_type = exc_info[0]
             if issubclass(exc_type, Backoff):
+
+                # when redelivering, copy original routing key to a new
+                # header so that we can still find the provider for the message
+                if RPC_METHOD_ID_HEADER_KEY not in message.headers:
+                    message.headers[RPC_METHOD_ID_HEADER_KEY] = (
+                        message.delivery_info['routing_key']
+                    )
 
                 target_queue = "rpc-{}".format(self.container.service_name)
                 try:
