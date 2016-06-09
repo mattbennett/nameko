@@ -4,13 +4,14 @@ import eventlet
 import pytest
 from eventlet.event import Event
 from mock import Mock, call, patch
+from requests import HTTPError, Response
+
 from nameko.constants import DEFAULT_MAX_WORKERS
 from nameko.rpc import Rpc, rpc
 from nameko.testing.rabbit import Client
 from nameko.testing.utils import (
     AnyInstanceOf, get_container, get_extension, get_rabbit_connections,
     reset_rabbit_connections, wait_for_call, wait_for_worker_idle)
-from requests import HTTPError, Response
 
 
 def test_any_instance_of():
@@ -57,7 +58,6 @@ def test_wait_for_call():
 
 def test_get_extension(rabbit_config):
 
-    from nameko.messaging import QueueConsumer
     from nameko.rpc import Rpc, RpcConsumer
     from nameko.containers import ServiceContainer
 
@@ -75,12 +75,11 @@ def test_get_extension(rabbit_config):
     container = ServiceContainer(Service, rabbit_config)
 
     rpc_consumer = get_extension(container, RpcConsumer)
-    queue_consumer = get_extension(container, QueueConsumer)
     foo_rpc = get_extension(container, Rpc, method_name="foo")
     bar_rpc = get_extension(container, Rpc, method_name="bar")
 
     extensions = container.extensions
-    assert extensions == set([rpc_consumer, queue_consumer, foo_rpc, bar_rpc])
+    assert set([rpc_consumer, foo_rpc, bar_rpc]).issubset(extensions)
 
 
 def test_get_container(runner_factory, rabbit_config):
