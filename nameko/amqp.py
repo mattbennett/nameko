@@ -105,37 +105,34 @@ class Backoff(Exception):
 class BackoffPublisher(Extension):
 
     def get_backoff_exchange(self, message):
-        message_exchange_name = message.delivery_info['exchange']
 
         backoff_exchange = Exchange(
             type="topic",
-            name="backoff--{}".format(message_exchange_name)
+            name="backoff"
         )
         return backoff_exchange
 
     def get_backoff_queue(self, message):
-        message_exchange_name = message.delivery_info['exchange']
+
         backoff_exchange = self.get_backoff_exchange(message)
 
         backoff_queue = Queue(
-            name="backoff--{}".format(message_exchange_name),
+            name="backoff",
             exchange=backoff_exchange,
             routing_key="#",
             queue_arguments={
-                'x-dead-letter-exchange': message_exchange_name
+                'x-dead-letter-exchange': "",   # default exchange
             }
         )
         return backoff_queue
 
-    def republish(self, backoff_cls, message):
+    def republish(self, backoff_cls, message, target_queue):
 
         backoff_headers = message.headers.get('x-death')
         expiration = backoff_cls.get_next_expiration(backoff_headers)
 
-        # get wait backoff_queue
-        backoff_queue = self.get_backoff_queue(message)
-
         # republish to backoff queue
+        backoff_queue = self.get_backoff_queue(message)
         conn = Connection(self.container.config[AMQP_URI_CONFIG_KEY])
         with connections[conn].acquire(block=True) as connection:
 
@@ -151,7 +148,7 @@ class BackoffPublisher(Extension):
                     message.body,
                     headers=headers,
                     exchange=backoff_queue.exchange,
-                    routing_key=message.delivery_info['routing_key'],
+                    routing_key=target_queue,
                     expiration=expiration / 1000,
                     **properties
                 )

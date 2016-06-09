@@ -120,8 +120,12 @@ class RpcConsumer(SharedExtension, ProviderCollector):
         if exc_info is not None:
             exc_type = exc_info[0]
             if issubclass(exc_type, Backoff):
+
+                target_queue = "rpc-{}".format(self.container.service_name)
                 try:
-                    self.backoff_publisher.republish(exc_type, message)
+                    self.backoff_publisher.republish(
+                        exc_type, message, target_queue
+                    )
                     self.queue_consumer.ack_message(message)
                     return result, exc_info
 

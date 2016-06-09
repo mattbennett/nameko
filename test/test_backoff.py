@@ -512,6 +512,7 @@ class TestMessaging(object):
     def test_queues_and_exchanges(self):
         pass
 
+
 # class TestMultipleEntrypoints(object):
 
 #     @pytest.fixture

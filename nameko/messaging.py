@@ -478,8 +478,12 @@ class Consumer(Entrypoint, HeaderDecoder):
         if exc_info is not None:
             exc_type = exc_info[0]
             if issubclass(exc_type, Backoff):
+
+                redeliver_to = self.queue.name
                 try:
-                    self.backoff_publisher.republish(exc_type, message)
+                    self.backoff_publisher.republish(
+                        exc_type, message, redeliver_to
+                    )
                 except Backoff.Expired:
                     exc_info = sys.exc_info()
                     result = None
