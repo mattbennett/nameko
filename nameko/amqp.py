@@ -7,7 +7,6 @@ from kombu import Connection
 from kombu.messaging import Exchange, Queue, maybe_declare
 from kombu.pools import connections, producers
 from kombu.transport.pyamqp import Transport
-
 from nameko.constants import AMQP_URI_CONFIG_KEY
 from nameko.extensions import Extension
 
@@ -89,8 +88,9 @@ class Backoff(Exception):
 
         if total_attempts >= cls.limit:
             raise cls.Expired(
-                "Backoff aborted after '{}' retries "
-                "(~{} seconds)".format(cls.limit, cls.max_delay / 1000)
+                "Backoff aborted after '{}' retries (~{} seconds)".format(
+                    cls.limit, cls.max_delay / 1000  # pylint: disable=E1101
+                )
             )
 
         expiration = cls.get_next_schedule_item(total_attempts)
