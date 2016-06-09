@@ -7,7 +7,6 @@ from kombu.messaging import Exchange, Queue
 from kombu.pools import connections, producers
 from kombu.serialization import register, unregister
 from mock import ANY, Mock, patch
-
 from nameko.amqp import Backoff
 from nameko.constants import AMQP_URI_CONFIG_KEY
 from nameko.events import event_handler
@@ -24,7 +23,7 @@ BACKOFF_COUNT = 3
 
 @pytest.yield_fixture(autouse=True)
 def fast_backoff():
-    with patch.object(Backoff, 'schedule', new=[10.0]):
+    with patch.object(Backoff, 'schedule', new=[5.0]):
         yield
 
 
@@ -348,7 +347,7 @@ class TestEvents(object):
 
     def test_multiple_services(
         self, dispatch_event, wait_for_result, container_factory,
-        rabbit_config, keyed_counter, entrypoint_tracker
+        rabbit_config, keyed_counter, entrypoint_tracker, rabbit_manager
     ):
         class ServiceOne(object):
             name = "service_one"
@@ -446,9 +445,6 @@ class TestEvents(object):
         )
         assert keyed_counter['c'] == BACKOFF_COUNT + 1
 
-    def test_queues_and_exchanges(self):
-        pass
-
 
 class TestMessaging(object):
 
@@ -494,100 +490,60 @@ class TestMessaging(object):
             [(Backoff.Expired, ANY, ANY)]
         )
 
-    def test_multiple_exchanges(self):
-        pass
+    def test_multiple_queues_with_same_exchange_and_routing_key(
+        self, container_factory, wait_for_result, rabbit_manager, exchange,
+        entrypoint_tracker, publish_message, keyed_counter, rabbit_config
+    ):
+        queue_one = Queue("one", exchange=exchange, routing_key="message")
+        queue_two = Queue("two", exchange=exchange, routing_key="message")
 
-    def test_multiple_queues(self):
-        pass
+        class ServiceOne(object):
+            name = "service_one"
 
-    def test_multiple_routing_keys(self):
-        pass
+            @consume(queue_one)
+            def method(self, payload):
+                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                    raise Backoff()
+                return "one"
 
-    def test_queues_and_exchanges(self):
-        pass
+        class ServiceTwo(object):
+            name = "service_two"
 
+            @consume(queue_two)
+            def method(self, payload):
+                keyed_counter.count("two")
+                return "two"
 
-# class TestMultipleEntrypoints(object):
+        container_one = container_factory(ServiceOne, rabbit_config)
+        container_one.start()
+        container_two = container_factory(ServiceTwo, rabbit_config)
+        container_two.start()
 
-#     @pytest.fixture
-#     def counter(self):
-#         class Counter(object):
+        with entrypoint_waiter(
+            container_one, 'method', callback=wait_for_result
+        ) as result_one:
 
-#             def __init__(self):
-#                 self.reset()
+            with entrypoint_waiter(
+                container_two, 'method', callback=wait_for_result
+            ) as result_two:
 
-#             def __getitem__(self, key):
-#                 return self.values[key]
+                publish_message(exchange, "msg", routing_key="message")
 
-#             def count(self, key):
-#                 self.values[key] += 1
-#                 return self.values[key]
+        # ensure all messages are processed
+        vhost = rabbit_config['vhost']
+        backoff_queue = rabbit_manager.get_queue(vhost, 'backoff')
+        service_queue_one = rabbit_manager.get_queue(vhost, queue_one.name)
+        service_queue_two = rabbit_manager.get_queue(vhost, queue_two.name)
+        assert backoff_queue['messages'] == 0
+        assert service_queue_one['messages'] == 0
+        assert service_queue_two['messages'] == 0
 
-#             def reset(self):
-#                 self.values = defaultdict(int)
+        assert result_one.get() == "one"
+        assert result_two.get() == "two"
 
-#         return Counter()
-
-#     @pytest.fixture
-#     def container(self, container_factory, rabbit_config, counter):
-
-#         class Service(object):
-#             name = "service"
-
-#             def process(self, handler):
-#                 if counter.count(handler) <= BACKOFF_COUNT:
-#                     raise Backoff()
-#                 return "result"
-
-#             @event_handler("s1", "e1")
-#             def a(self, payload):
-#                 return self.process("a")
-
-#             @event_handler("s1", "e2")
-#             def b(self, payload):
-#                 return self.process("b")
-
-#             @event_handler("s2", "e1")
-#             def c(self, payload):
-#                 return self.process("c")
-
-#         container = container_factory(Service, rabbit_config)
-#         container.start()
-#         return container
-
-#     def test_multiple_entrypoints(
-#         self, container, dispatch_event, rabbit_manager, rabbit_config,
-#         wait_for_result, counter
-#     ):
-#         # create backoff queues and exchanges
-#         with entrypoint_waiter(container, 'a', callback=wait_for_result):
-#             dispatch_event('s1', 'e1', {})
-#         with entrypoint_waiter(container, 'b', callback=wait_for_result):
-#             dispatch_event('s1', 'e2', {})
-#         with entrypoint_waiter(container, 'c', callback=wait_for_result):
-#             dispatch_event('s2', 'e1', {})
-
-#         # verify queues and exchanges created
-#         vhost = rabbit_config['vhost']
-#         queues = rabbit_manager.get_queues(vhost)
-#         exchanges = rabbit_manager.get_exchanges(vhost)
-
-#         queue_names = [queue['name'] for queue in queues]
-#         exchange_names = [exchange['name'] for exchange in exchanges]
-
-#         assert "backoff--s1.events" in queue_names
-#         assert "backoff--s2.events" in queue_names
-#         assert "backoff--s1.events" in exchange_names
-#         assert "backoff--s2.events" in exchange_names
-
-#         # verify correct entrypoint called
-#         counter.reset()
-#         with entrypoint_waiter(container, 'a', callback=wait_for_result):
-#             dispatch_event('s1', 'e1', {})
-
-#         assert counter['a'] == 4
-#         assert counter['b'] == 0
-#         assert counter['c'] == 0
+        # backoff from service_one not seen by service_two
+        assert keyed_counter['one'] == BACKOFF_COUNT + 1
+        assert keyed_counter['two'] == 1
 
 
 class TestCallStack(object):
