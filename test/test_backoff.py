@@ -184,13 +184,12 @@ class TestRpc(object):
 
         assert res == result.get() == "result"
 
-        # 'normal' backoff is 3
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "result"
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff, ANY, ANY), (Backoff, ANY, ANY), None
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["result"]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * BACKOFF_COUNT + [None]
+        )
 
     def test_expiry(
         self, container, entrypoint_tracker, rpc_proxy, limited_backoff,
@@ -209,13 +208,13 @@ class TestRpc(object):
             "Backoff aborted after '{}' retries".format(limited_backoff)
         ) in str(raised.value)
 
-        # backoff limited to 1
-        assert entrypoint_tracker.get_results() == [
-            None, None
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff.Expired, ANY, ANY)
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * limited_backoff + [None]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * limited_backoff +
+            [(Backoff.Expired, ANY, ANY)]
+        )
 
     def test_multiple_services(
         self, rpc_proxy, wait_for_result, keyed_counter,
@@ -250,9 +249,9 @@ class TestRpc(object):
         ) as result:
             res = rpc_proxy.service_one.method("arg")
         assert result.get() == res == "one"
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "one"
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["one"]
+        )
         assert keyed_counter['one'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(
@@ -260,10 +259,10 @@ class TestRpc(object):
         ) as result:
             res = rpc_proxy.service_two.method("arg")
         assert result.get() == res == "two"
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "one",
-            None, None, None, "two",
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["one"] +
+            [None] * BACKOFF_COUNT + ["two"]
+        )
         assert keyed_counter['two'] == BACKOFF_COUNT + 1
 
     def test_multiple_methods(
@@ -291,21 +290,18 @@ class TestRpc(object):
 
         with entrypoint_waiter(container, 'a', callback=wait_for_result):
             rpc_proxy.service.a()
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "a"
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["a"]
+        )
         assert keyed_counter['a'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'b', callback=wait_for_result):
             rpc_proxy.service.b()
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "a",
-            None, None, None, "b",
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["a"] +
+            [None] * BACKOFF_COUNT + ["b"]
+        )
         assert keyed_counter['b'] == BACKOFF_COUNT + 1
-
-    def test_queues_and_exchanges(self):
-        pass
 
 
 class TestEvents(object):
@@ -320,13 +316,12 @@ class TestEvents(object):
 
         assert result.get() == "result"
 
-        # 'normal' backoff is 3
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "result"
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff, ANY, ANY), (Backoff, ANY, ANY), None
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["result"]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * BACKOFF_COUNT + [None]
+        )
 
     def test_expiry(
         self, container, entrypoint_tracker, dispatch_event, limited_backoff,
@@ -343,13 +338,13 @@ class TestEvents(object):
             "Backoff aborted after '{}' retries".format(limited_backoff)
         ) in str(raised.value)
 
-        # backoff limited to 1
-        assert entrypoint_tracker.get_results() == [
-            None, None
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff.Expired, ANY, ANY)
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * limited_backoff + [None]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * limited_backoff +
+            [(Backoff.Expired, ANY, ANY)]
+        )
 
     def test_multiple_services(
         self, dispatch_event, wait_for_result, container_factory,
@@ -429,26 +424,26 @@ class TestEvents(object):
 
         with entrypoint_waiter(container, 'a', callback=wait_for_result):
             dispatch_event('s1', 'e1', {})
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "a"
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["a"]
+        )
         assert keyed_counter['a'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'b', callback=wait_for_result):
             dispatch_event('s1', 'e2', {})
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "a",
-            None, None, None, "b",
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["a"] +
+            [None] * BACKOFF_COUNT + ["b"]
+        )
         assert keyed_counter['b'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'c', callback=wait_for_result):
             dispatch_event('s2', 'e1', {})
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "a",
-            None, None, None, "b",
-            None, None, None, "c",
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["a"] +
+            [None] * BACKOFF_COUNT + ["b"] +
+            [None] * BACKOFF_COUNT + ["c"]
+        )
         assert keyed_counter['c'] == BACKOFF_COUNT + 1
 
     def test_queues_and_exchanges(self):
@@ -469,13 +464,12 @@ class TestMessaging(object):
 
         assert result.get() == "result"
 
-        # 'normal' backoff is 3
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "result"
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff, ANY, ANY), (Backoff, ANY, ANY), None
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * BACKOFF_COUNT + ["result"]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * BACKOFF_COUNT + [None]
+        )
 
     def test_expiry(
         self, container, entrypoint_tracker, publish_message, exchange, queue,
@@ -492,13 +486,13 @@ class TestMessaging(object):
             "Backoff aborted after '{}' retries".format(limited_backoff)
         ) in str(raised.value)
 
-        # backoff limited to 1
-        assert entrypoint_tracker.get_results() == [
-            None, None
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff.Expired, ANY, ANY)
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * limited_backoff + [None]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * limited_backoff +
+            [(Backoff.Expired, ANY, ANY)]
+        )
 
     def test_multiple_exchanges(self):
         pass
