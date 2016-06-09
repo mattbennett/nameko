@@ -6,7 +6,7 @@ from kombu import Connection
 from kombu.messaging import Exchange, Queue
 from kombu.pools import connections, producers
 from kombu.serialization import register, unregister
-from mock import ANY, patch
+from mock import ANY, Mock, patch
 
 from nameko.amqp import Backoff
 from nameko.constants import AMQP_URI_CONFIG_KEY
@@ -785,7 +785,7 @@ class TestDeadLetteredMessages(object):
         # allow exactly `BACKOFF_COUNT` backoffs
         limit = BACKOFF_COUNT
         with patch.object(Backoff, 'limit', new=limit):
-            yield
+            yield limit
 
     @pytest.fixture
     def deadlettering_exchange(self, rabbit_config, exchange, queue):
@@ -811,8 +811,8 @@ class TestDeadLetteredMessages(object):
         return deadletter_exchange
 
     def test_backoff_works_on_previously_deadlettered_message(
-        self, container, publish_message, deadlettering_exchange, queue, exchange,
-        wait_for_result, entrypoint_tracker
+        self, container, publish_message, deadlettering_exchange,
+        queue, exchange, wait_for_result, entrypoint_tracker, limited_backoff
     ):
 
         with entrypoint_waiter(
@@ -832,13 +832,12 @@ class TestDeadLetteredMessages(object):
         # so we shouldn't see Backoff.Expired here
         assert result.get() == "result"
 
-        # 'normal' backoff is 3
-        assert entrypoint_tracker.get_results() == [
-            None, None, None, "result"
-        ]
-        assert entrypoint_tracker.get_exceptions() == [
-            (Backoff, ANY, ANY), (Backoff, ANY, ANY), (Backoff, ANY, ANY), None
-        ]
+        assert entrypoint_tracker.get_results() == (
+            [None] * limited_backoff + ["result"]
+        )
+        assert entrypoint_tracker.get_exceptions() == (
+            [(Backoff, ANY, ANY)] * limited_backoff + [None]
+        )
 
 
 class TestGetNextExpiration(object):
@@ -850,51 +849,92 @@ class TestGetNextExpiration(object):
         Backoff.limit = 10
         return Backoff()
 
-    def test_no_headers(self, backoff):
-        assert backoff.get_next_expiration(None) == 1000
-
     def test_first_backoff(self, backoff):
-        headers = [{
-            'count': 1
-        }]
-        assert backoff.get_next_expiration(headers) == 1000
+        message = Mock()
+        message.headers = {}
+        assert backoff.get_next_expiration(message, "backoff") == 1000
 
     def test_next_backoff(self, backoff):
-        headers = [{
-            'count': 2
-        }]
-        assert backoff.get_next_expiration(headers) == 2000
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 1
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 2000
 
     def test_last_backoff(self, backoff):
-        headers = [{
-            'count': 4
-        }]
-        assert backoff.get_next_expiration(headers) == 3000
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 3
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 3000
 
     def test_count_greater_than_schedule_length(self, backoff):
-        headers = [{
-            'count': 5
-        }]
-        assert backoff.get_next_expiration(headers) == 3000
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 5
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 3000
 
     def test_count_greater_than_limit(self, backoff):
-        headers = [{
-            'count': 99
-        }]
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 99
+            }]
+        }
         with pytest.raises(Backoff.Expired) as exc_info:
-            backoff.get_next_expiration(headers)
+            backoff.get_next_expiration(message, "backoff")
         # 27 = 1 + 2 + 3 * 8
         assert str(exc_info.value) == (
             "Backoff aborted after '10' retries (~27 seconds)"
         )
 
     def test_count_equal_to_limit(self, backoff):
-        headers = [{
-            'count': 10
-        }]
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 10
+            }]
+        }
         with pytest.raises(Backoff.Expired) as exc_info:
-            backoff.get_next_expiration(headers)
+            backoff.get_next_expiration(message, "backoff")
         # 27 = 1 + 2 + 3 * 8
         assert str(exc_info.value) == (
             "Backoff aborted after '10' retries (~27 seconds)"
         )
+
+    def test_previously_deadlettered_first_backoff(self, backoff):
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                # previously deadlettered elsewhere
+                'exchange': 'not-backoff',
+                'count': 99
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 1000
+
+    def test_previously_deadlettered_next_backoff(self, backoff):
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 1
+            }, {
+                # previously deadlettered elsewhere
+                'exchange': 'not-backoff',
+                'count': 99
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 2000

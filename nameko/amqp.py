@@ -79,15 +79,13 @@ class Backoff(Exception):
         return item
 
     @classmethod
-    def get_next_expiration(cls, headers):
+    def get_next_expiration(cls, message, backoff_exchange_name):
 
-        if headers is None:
-            expiration = cls.schedule[0]
-            if cls.randomness:
-                pass
-            return expiration
-
-        total_attempts = int(headers[0]['count'])
+        total_attempts = 0
+        for deadlettered in message.headers.get('x-death', ()):
+            if deadlettered['exchange'] == backoff_exchange_name:
+                total_attempts = int(deadlettered['count'])
+                break
 
         if total_attempts >= cls.limit:
             raise cls.Expired(
@@ -95,7 +93,7 @@ class Backoff(Exception):
                 "(~{} seconds)".format(cls.limit, cls.max_delay / 1000)
             )
 
-        expiration = cls.get_next_schedule_item(total_attempts - 1)
+        expiration = cls.get_next_schedule_item(total_attempts)
 
         if cls.randomness:
             pass
@@ -128,8 +126,11 @@ class BackoffPublisher(Extension):
 
     def republish(self, backoff_cls, message, target_queue):
 
-        backoff_headers = message.headers.get('x-death')
-        expiration = backoff_cls.get_next_expiration(backoff_headers)
+        backoff_exchange = self.get_backoff_exchange(message)
+
+        expiration = backoff_cls.get_next_expiration(
+            message, backoff_exchange.name
+        )
 
         # republish to backoff queue
         backoff_queue = self.get_backoff_queue(message)
