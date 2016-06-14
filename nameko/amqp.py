@@ -8,6 +8,7 @@ from kombu.common import maybe_declare
 from kombu.messaging import Exchange, Queue
 from kombu.pools import connections, producers
 from kombu.transport.pyamqp import Transport
+
 from nameko.constants import AMQP_URI_CONFIG_KEY
 from nameko.extensions import Extension
 
@@ -54,18 +55,20 @@ def verify_amqp_uri(amqp_uri):
         pass
 
 
+class BackoffMeta(type):
+    @property
+    def max_delay(cls):
+        return sum(
+            cls.get_next_schedule_item(index) for index in range(cls.limit)
+        )
+
+
+@six.add_metaclass(BackoffMeta)
 class Backoff(Exception):
 
     schedule = (1000, 2000, 3000, 5000, 8000, 13000, 21000, 34000, 55000)
     randomness = 0.5
     limit = 20
-
-    class __metaclass__(type):
-        @property
-        def max_delay(cls):
-            return sum(
-                cls.get_next_schedule_item(index) for index in range(cls.limit)
-            )
 
     class Expired(Exception):
         pass
