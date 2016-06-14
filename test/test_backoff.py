@@ -7,6 +7,7 @@ from kombu.messaging import Exchange, Queue
 from kombu.pools import connections, producers
 from kombu.serialization import register, unregister
 from mock import ANY, Mock, patch
+
 from nameko.amqp import Backoff
 from nameko.constants import AMQP_URI_CONFIG_KEY
 from nameko.events import event_handler
@@ -47,7 +48,9 @@ def queue(exchange):
 @pytest.fixture
 def publish_message(rabbit_config):
 
-    def publish(exchange, payload, routing_key=None, **kwargs):
+    def publish(
+        exchange, payload, routing_key=None, serializer="json", **kwargs
+    ):
         conn = Connection(rabbit_config[AMQP_URI_CONFIG_KEY])
 
         with connections[conn].acquire(block=True) as connection:
@@ -57,6 +60,7 @@ def publish_message(rabbit_config):
                     payload,
                     exchange=exchange,
                     routing_key=routing_key,
+                    serializer=serializer,
                     **kwargs
                 )
 
