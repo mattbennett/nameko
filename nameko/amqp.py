@@ -92,7 +92,7 @@ class Backoff(Exception):
 
         if total_attempts >= cls.limit:
             raise cls.Expired(
-                "Backoff aborted after '{}' retries (~{} seconds)".format(
+                "Backoff aborted after '{}' retries (~{:.0f} seconds)".format(
                     cls.limit, cls.max_delay / 1000  # pylint: disable=E1101
                 )
             )
