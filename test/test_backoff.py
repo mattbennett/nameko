@@ -393,8 +393,9 @@ class TestEvents(object):
         assert keyed_counter['two'] == BACKOFF_COUNT + 1
 
         results = entrypoint_tracker.get_results()
-        assert results[:6] == 6 * [None]
-        assert set(results[-2:]) == {"one", "two"}  # order not guaranteed
+        # order not guaranteed
+        assert results.count(None) == BACKOFF_COUNT * 2
+        assert results.count("one") == results.count("two") == 1
 
     def test_multiple_handlers(
         self, container_factory, rabbit_config, wait_for_result,
