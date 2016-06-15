@@ -5,6 +5,8 @@ import sys
 import uuid
 import warnings
 from abc import ABCMeta, abstractproperty
+from collections import defaultdict
+from contextlib import contextmanager
 from logging import getLogger
 
 import eventlet
@@ -12,6 +14,7 @@ import six
 from eventlet.event import Event
 from eventlet.greenpool import GreenPool
 from greenlet import GreenletExit  # pylint: disable=E0611
+
 from nameko.constants import (
     CALL_ID_STACK_CONTEXT_KEY, DEFAULT_MAX_WORKERS,
     DEFAULT_PARENT_CALLS_TRACKED, DEFAULT_SERIALIZER, MAX_WORKERS_CONFIG_KEY,
@@ -168,6 +171,8 @@ class ServiceContainer(object):
         self.started = False
         self._worker_pool = GreenPool(size=self.max_workers)
 
+        self._entrypoint_waiters = defaultdict(list)
+
         self._worker_threads = {}
         self._managed_threads = {}
         self._being_killed = False
@@ -321,6 +326,12 @@ class ServiceContainer(object):
         """
         return self._died.wait()
 
+    @contextmanager
+    def register_entrypoint_waiter(self, method_name, waiter):
+        self._entrypoint_waiters[method_name].append(waiter)
+        yield
+        self._entrypoint_waiters[method_name].remove(waiter)
+
     def spawn_worker(self, entrypoint, args, kwargs,
                      context_data=None, handle_result=None):
         """ Spawn a worker thread for running the service method decorated
@@ -435,10 +446,23 @@ class ServiceContainer(object):
 
     def _worker_result(self, worker_ctx, result, exc_info):
         _log.debug('signalling result for %s', worker_ctx)
+
+        # notify dependencies
         self.dependencies.all.worker_result(worker_ctx, result, exc_info)
 
+        # notify entrypoint waiters
+        method_name = worker_ctx.entrypoint.method_name
+        for waiter in self._entrypoint_waiters[method_name]:
+            waiter.worker_result(worker_ctx, result, exc_info)
+
     def _worker_teardown(self, worker_ctx):
+        # notify dependencies
         self.dependencies.all.worker_teardown(worker_ctx)
+
+        # notify entrypoint waiters
+        method_name = worker_ctx.entrypoint.method_name
+        for waiter in self._entrypoint_waiters[method_name]:
+            waiter.worker_teardown(worker_ctx)
 
     def _kill_worker_threads(self):
         """ Kill any currently executing worker threads.

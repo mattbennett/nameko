@@ -7,13 +7,13 @@ from collections import OrderedDict
 from contextlib import contextmanager
 
 import eventlet
+import six
 from eventlet import event
 from mock import MagicMock
 
 from nameko.exceptions import ExtensionNotFound
 from nameko.extensions import DependencyProvider, Entrypoint
 from nameko.testing.utils import get_extension
-from nameko.testing.waiting import WaitResult, wait_for_call
 
 
 @contextmanager
@@ -83,14 +83,62 @@ class EntrypointWaiterTimeout(Exception):
     pass
 
 
+class EntrypointWaiter(object):
+
+    class Result(object):
+        res = None
+        exc_info = None
+
+        def __init__(self):
+            self.event = event.Event()
+
+        def send(self, res, exc_info):
+            if not self.event.ready():
+                self.res = res
+                self.exc_info = exc_info
+                self.event.send(True)
+
+        def get(self):
+            if self.exc_info is not None:
+                six.reraise(*self.exc_info)
+            return self.res
+
+        def wait(self):
+            self.event.wait()
+
+    def __init__(self, callback):
+        self.callback = callback
+        self.result = EntrypointWaiter.Result()
+        self.teardown = EntrypointWaiter.Result()
+
+    @contextmanager
+    def wait(self):
+        yield
+        self.result.wait()
+        self.teardown.wait()
+
+    def worker_result(self, worker_ctx, result, exc_info):
+        complete = True
+        if callable(self.callback):
+            complete = self.callback(worker_ctx, result, exc_info)
+
+        if complete:
+            self.result.send(result, exc_info)
+        return complete
+
+    def worker_teardown(self, worker_ctx):
+        self.teardown.send(True, None)
+        return True
+
+
 @contextmanager
 def entrypoint_waiter(container, method_name, timeout=30, callback=None):
     """ Context manager that waits until an entrypoint has fired (and
     completed).
 
-    It yields a :class:`nameko.testing.waiting.WaitResult` object that can be
-    used to get the result returned (exception raised) by the entrypoint
-    after the waiter has exited.
+    It yields a :class:`nameko.testing.services.EntrypointWaiter.Result` object
+    that can be used to get the result returned (exception raised) by the
+    entrypoint after the waiter has exited.
 
     :Parameters:
         container : ServiceContainer
@@ -164,41 +212,17 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
         raise RuntimeError("{} has no entrypoint `{}`".format(
             container.service_name, method_name))
 
-    waiter_callback = callback
-    waiter_result = WaitResult()
-
-    def on_worker_result(worker_ctx, result, exc_info):
-        complete = False
-        if worker_ctx.entrypoint.method_name == method_name:
-            if not callable(waiter_callback):
-                complete = True
-            else:
-                complete = waiter_callback(worker_ctx, result, exc_info)
-
-        if complete:
-            waiter_result.send(result, exc_info)
-        return complete
-
-    def on_worker_teardown(worker_ctx):
-        if worker_ctx.entrypoint.method_name == method_name:
-            return True
-        return False
-
     exc = EntrypointWaiterTimeout(
         "EntrypointWaiterTimeout on {}.{} after {} seconds".format(
             container.service_name, method_name, timeout)
     )
 
+    waiter = EntrypointWaiter(callback)
+
     with eventlet.Timeout(timeout, exception=exc):
-        with wait_for_call(
-            container, '_worker_teardown',
-            lambda args, kwargs, res, exc: on_worker_teardown(*args)
-        ):
-            with wait_for_call(
-                container, '_worker_result',
-                lambda args, kwargs, res, exc: on_worker_result(*args)
-            ):
-                yield waiter_result
+        with container.register_entrypoint_waiter(method_name, waiter):
+            with waiter.wait():
+                yield waiter.result
 
 
 def worker_factory(service_cls, **dependencies):
