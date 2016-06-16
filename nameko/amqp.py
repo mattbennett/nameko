@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 
+import random
+
 import amqp
 import six
 from amqp.exceptions import NotAllowed
@@ -67,7 +69,7 @@ class BackoffMeta(type):
 class Backoff(Exception):
 
     schedule = (1000, 2000, 3000, 5000, 8000, 13000, 21000, 34000, 55000)
-    randomness = 0.5
+    randomness = 100  # standard deviation
     limit = 20
 
     class Expired(Exception):
@@ -100,7 +102,7 @@ class Backoff(Exception):
         expiration = cls.get_next_schedule_item(total_attempts)
 
         if cls.randomness:
-            pass
+            expiration = int(random.gauss(expiration, cls.randomness))
         return expiration
 
 

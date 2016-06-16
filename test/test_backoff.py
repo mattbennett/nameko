@@ -6,7 +6,7 @@ from kombu import Connection
 from kombu.messaging import Exchange, Queue
 from kombu.pools import connections, producers
 from kombu.serialization import register, unregister
-from mock import ANY, Mock, patch
+from mock import ANY, Mock, call, patch
 
 from nameko.amqp import Backoff
 from nameko.constants import AMQP_URI_CONFIG_KEY
@@ -25,6 +25,12 @@ BACKOFF_COUNT = 3
 @pytest.yield_fixture(autouse=True)
 def fast_backoff():
     with patch.object(Backoff, 'schedule', new=[50]):
+        yield
+
+
+@pytest.yield_fixture(autouse=True)
+def no_randomness():
+    with patch.object(Backoff, 'randomness', new=0):
         yield
 
 
@@ -799,10 +805,21 @@ class TestGetNextExpiration(object):
 
     @pytest.fixture
     def backoff(self):
-        Backoff.schedule = [1000, 2000, 3000]
-        Backoff.randomness = 0
-        Backoff.limit = 10
-        return Backoff()
+        class CustomBackoff(Backoff):
+            schedule = [1000, 2000, 3000]
+            randomness = 0
+            limit = 10
+
+        return CustomBackoff()
+
+    @pytest.fixture
+    def backoff_with_randomness(self):
+        class CustomBackoff(Backoff):
+            schedule = [1000, 2000, 3000]
+            randomness = 100
+            limit = 10
+
+        return CustomBackoff()
 
     def test_first_backoff(self, backoff):
         message = Mock()
@@ -893,3 +910,22 @@ class TestGetNextExpiration(object):
             }]
         }
         assert backoff.get_next_expiration(message, "backoff") == 2000
+
+    @patch('nameko.amqp.random')
+    def test_backoff_randomness(self, random_patch, backoff_with_randomness):
+
+        random_patch.gauss.return_value = 2200.0
+
+        backoff = backoff_with_randomness
+
+        message = Mock()
+        message.headers = {
+            'x-death': [{
+                'exchange': 'backoff',
+                'count': 1
+            }]
+        }
+        assert backoff.get_next_expiration(message, "backoff") == 2200
+        assert random_patch.gauss.call_args_list == [
+            call(2000, backoff.randomness)
+        ]
