@@ -55,6 +55,7 @@ def test_event_dispatcher(mock_container):
 def test_event_handler(queue_consumer, mock_container):
 
     container = mock_container
+    container.shared_extensions = {}
     container.service_name = "destservice"
 
     # test default configuration
@@ -138,6 +139,7 @@ class TestReliableDeliveryEventHandlerConfigurationError():
     ):
 
         container = mock_container
+        container.shared_extensions = {}
         container.service_name = "destservice"
 
         # test broadcast handler with reliable delivery
@@ -153,6 +155,7 @@ class TestReliableDeliveryEventHandlerConfigurationError():
         self, queue_consumer, mock_container
     ):
         container = mock_container
+        container.shared_extensions = {}
         container.service_name = "destservice"
 
         # test broadcast handler with reliable delivery and custom identifier

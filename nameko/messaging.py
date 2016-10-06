@@ -481,6 +481,12 @@ class Consumer(Entrypoint, HeaderDecoder):
             exc_type = exc_info[0]
             if issubclass(exc_type, Backoff):
 
+                # add call stack and modify the current entry to show backoff
+                message.headers['nameko.call_id_stack'] = (
+                    worker_ctx.call_id_stack
+                )
+                message.headers['nameko.call_id_stack'][-1] += ".backoff"
+
                 redeliver_to = self.queue.name
                 try:
                     self.backoff_publisher.republish(

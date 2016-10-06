@@ -29,6 +29,7 @@ _log = getLogger(__name__)
 RPC_QUEUE_TEMPLATE = 'rpc-{}'
 RPC_REPLY_QUEUE_TEMPLATE = 'rpc.reply-{}-{}'
 RPC_METHOD_ID_HEADER_KEY = 'nameko.rpc_method_id'
+CALL_ID_STACK_HEADER_KEY = 'nameko.call_id_stack'
 
 
 def get_rpc_exchange(config):
@@ -40,7 +41,6 @@ def get_rpc_exchange(config):
 class RpcConsumer(SharedExtension, ProviderCollector):
 
     queue_consumer = QueueConsumer()
-    backoff_publisher = BackoffPublisher()
 
     def __init__(self):
         self._unregistering_providers = set()
@@ -123,29 +123,6 @@ class RpcConsumer(SharedExtension, ProviderCollector):
 
     def handle_result(self, message, result, exc_info):
 
-        if exc_info is not None:
-            exc_type = exc_info[0]
-            if issubclass(exc_type, Backoff):
-
-                # when redelivering, copy original routing key to a new
-                # header so that we can still find the provider for the message
-                if RPC_METHOD_ID_HEADER_KEY not in message.headers:
-                    message.headers[RPC_METHOD_ID_HEADER_KEY] = (
-                        message.delivery_info['routing_key']
-                    )
-
-                target_queue = "rpc-{}".format(self.container.service_name)
-                try:
-                    self.backoff_publisher.republish(
-                        exc_type, message, target_queue
-                    )
-                    self.queue_consumer.ack_message(message)
-                    return result, exc_info
-
-                except Backoff.Expired:
-                    exc_info = sys.exc_info()
-                    result = None
-
         responder = Responder(self.container.config, message)
         result, exc_info = responder.send_response(result, exc_info)
 
@@ -156,9 +133,11 @@ class RpcConsumer(SharedExtension, ProviderCollector):
         self.queue_consumer.requeue_message(message)
 
 
-class Rpc(Entrypoint, HeaderDecoder):
+class Rpc(Entrypoint, HeaderDecoder, HeaderEncoder):
 
     rpc_consumer = RpcConsumer()
+    queue_consumer = QueueConsumer()
+    backoff_publisher = BackoffPublisher()
 
     def __init__(self, expected_exceptions=(), sensitive_variables=()):
         """ Mark a method to be exposed over rpc
@@ -208,6 +187,36 @@ class Rpc(Entrypoint, HeaderDecoder):
             self.rpc_consumer.requeue_message(message)
 
     def handle_result(self, message, worker_ctx, result, exc_info):
+
+        if exc_info is not None:
+            exc_type = exc_info[0]
+            if issubclass(exc_type, Backoff):
+
+                # add call stack and modify the current entry to show backoff
+                message.headers[CALL_ID_STACK_HEADER_KEY] = (
+                    worker_ctx.call_id_stack
+                )
+                message.headers[CALL_ID_STACK_HEADER_KEY][-1] += ".backoff"
+
+                # when redelivering, copy the original routing key to a new
+                # header so that we can still find the provider for the message
+                if RPC_METHOD_ID_HEADER_KEY not in message.headers:
+                    message.headers[RPC_METHOD_ID_HEADER_KEY] = (
+                        message.delivery_info['routing_key']
+                    )
+
+                target_queue = "rpc-{}".format(self.container.service_name)
+                try:
+                    self.backoff_publisher.republish(
+                        exc_type, message, target_queue
+                    )
+                    self.queue_consumer.ack_message(message)
+                    return result, exc_info
+
+                except Backoff.Expired:
+                    exc_info = sys.exc_info()
+                    result = None
+
         result, exc_info = self.rpc_consumer.handle_result(
             message, result, exc_info)
         return result, exc_info

@@ -75,36 +75,18 @@ def publish_message(rabbit_config):
 
 @pytest.fixture
 def dispatch_event(rabbit_config):
-    return event_dispatcher(rabbit_config)
+
+    def dispatch(service_name, event_type, event_data, **kwargs):
+        dispatcher = event_dispatcher(rabbit_config, **kwargs)
+        dispatcher(service_name, event_type, event_data)
+
+    return dispatch
 
 
 @pytest.yield_fixture
 def rpc_proxy(rabbit_config):
     with ClusterRpcProxy(rabbit_config) as proxy:
         yield proxy
-
-
-@pytest.fixture
-def entrypoint_tracker():
-
-    class CallTracker(object):
-
-        def __init__(self):
-            self.calls = []
-
-        def __len__(self):
-            return len(self.calls)
-
-        def track(self, **call):
-            self.calls.append(call)
-
-        def get_results(self):
-            return [call['result'] for call in self.calls]
-
-        def get_exceptions(self):
-            return [call['exc_info'] for call in self.calls]
-
-    return CallTracker()
 
 
 @pytest.fixture
@@ -164,7 +146,35 @@ def container(container_factory, rabbit_config, service_cls):
 
 
 @pytest.fixture
+def entrypoint_tracker():
+
+    class CallTracker(object):
+
+        def __init__(self):
+            self.calls = []
+
+        def __len__(self):
+            return len(self.calls)
+
+        def track(self, **call):
+            self.calls.append(call)
+
+        def get_results(self):
+            return [call['result'] for call in self.calls]
+
+        def get_exceptions(self):
+            return [call['exc_info'] for call in self.calls]
+
+    return CallTracker()
+
+
+@pytest.fixture
 def wait_for_result(entrypoint_tracker):
+    """ Callback for the `entrypoint_waiter` that waits until the entrypoint
+    returns a non-exception.
+
+    Captures the entrypoint executions using `entrypoint_tracker`.
+    """
     def cb(worker_ctx, res, exc_info):
         entrypoint_tracker.track(result=res, exc_info=exc_info)
         if exc_info is None or exc_info[0] is Backoff.Expired:
@@ -174,6 +184,11 @@ def wait_for_result(entrypoint_tracker):
 
 @pytest.fixture
 def wait_for_backoff_expired(entrypoint_tracker):
+    """ Callback for the `entrypoint_waiter` that waits until the entrypoint
+    raises a `BackoffExpired` exception.
+
+    Captures the entrypoint executions using `entrypoint_tracker`.
+    """
     def cb(worker_ctx, res, exc_info):
         entrypoint_tracker.track(result=res, exc_info=exc_info)
         if exc_info and exc_info[0] is Backoff.Expired:
@@ -186,6 +201,8 @@ class TestRpc(object):
     def test_rpc(
         self, container, entrypoint_tracker, rpc_proxy, wait_for_result
     ):
+        """ RPC entrypoint supports backoff
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_result
         ) as result:
@@ -193,9 +210,11 @@ class TestRpc(object):
 
         assert res == result.get() == "result"
 
+        # entrypoint fired BACKOFF_COUNT + 1 times
         assert entrypoint_tracker.get_results() == (
             [None] * BACKOFF_COUNT + ["result"]
         )
+        # entrypoint raised `Backoff` for all but the last execution
         assert entrypoint_tracker.get_exceptions() == (
             [(Backoff, ANY, ANY)] * BACKOFF_COUNT + [None]
         )
@@ -204,6 +223,8 @@ class TestRpc(object):
         self, container, entrypoint_tracker, rpc_proxy, limited_backoff,
         wait_for_backoff_expired
     ):
+        """ RPC entrypoint supports backoff expiry
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_backoff_expired
         ) as result:
@@ -217,9 +238,12 @@ class TestRpc(object):
             "Backoff aborted after '{}' retries".format(limited_backoff)
         ) in str(raised.value)
 
+        # entrypoint fired `limited_backoff` + 1 times
         assert entrypoint_tracker.get_results() == (
             [None] * limited_backoff + [None]
         )
+        # entrypoint raised `Backoff` for all but the last execution,
+        # and then raised `Backoff.Expired`
         assert entrypoint_tracker.get_exceptions() == (
             [(Backoff, ANY, ANY)] * limited_backoff +
             [(Backoff.Expired, ANY, ANY)]
@@ -229,7 +253,8 @@ class TestRpc(object):
         self, rpc_proxy, wait_for_result, keyed_counter,
         container_factory, rabbit_config, entrypoint_tracker
     ):
-
+        """ RPC backoff works correctly when multiple services use it
+        """
         class ServiceOne(object):
             name = "service_one"
 
@@ -278,7 +303,9 @@ class TestRpc(object):
         self, container_factory, rabbit_config, wait_for_result, rpc_proxy,
         entrypoint_tracker, keyed_counter
     ):
-
+        """ RPC backoff works correctly when multiple entrypoints in the same
+        service use it
+        """
         class Service(object):
             name = "service"
 
@@ -318,6 +345,8 @@ class TestEvents(object):
     def test_events(
         self, container, entrypoint_tracker, dispatch_event, wait_for_result
     ):
+        """ Event handler supports backoff
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_result
         ) as result:
@@ -336,6 +365,8 @@ class TestEvents(object):
         self, container, entrypoint_tracker, dispatch_event, limited_backoff,
         wait_for_backoff_expired
     ):
+        """ Event handler supports backoff expiry
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_backoff_expired
         ) as result:
@@ -359,6 +390,8 @@ class TestEvents(object):
         self, dispatch_event, wait_for_result, container_factory,
         rabbit_config, keyed_counter, entrypoint_tracker, rabbit_manager
     ):
+        """ Event handler backoff works when multiple services use it
+        """
         class ServiceOne(object):
             name = "service_one"
 
@@ -407,7 +440,10 @@ class TestEvents(object):
         self, container_factory, rabbit_config, wait_for_result,
         entrypoint_tracker, dispatch_event, keyed_counter
     ):
-
+        """ Event handler backoff works when multiple entrypoints in the same
+        service use it, including events with identical types originating from
+        different services.
+        """
         class Service(object):
             name = "service"
 
@@ -464,6 +500,8 @@ class TestMessaging(object):
         self, container, entrypoint_tracker, publish_message, exchange, queue,
         wait_for_result
     ):
+        """ Message consumption supports backoff
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_result
         ) as result:
@@ -482,6 +520,8 @@ class TestMessaging(object):
         self, container, entrypoint_tracker, publish_message, exchange, queue,
         limited_backoff, wait_for_backoff_expired
     ):
+        """ Message consumption supports backoff expiry
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_backoff_expired
         ) as result:
@@ -505,6 +545,9 @@ class TestMessaging(object):
         self, container_factory, wait_for_result, rabbit_manager, exchange,
         entrypoint_tracker, publish_message, keyed_counter, rabbit_config
     ):
+        """ Message consumption backoff works when there are muliple queues
+        receiving the published message
+        """
         queue_one = Queue("one", exchange=exchange, routing_key="message")
         queue_two = Queue("two", exchange=exchange, routing_key="message")
 
@@ -565,6 +608,7 @@ class TestCallStack(object):
         class CallStack(DependencyProvider):
             """ Exposes the call stack directly to the service
             """
+
             def get_dependency(self, worker_ctx):
                 return worker_ctx.context_data['call_id_stack']
 
@@ -577,7 +621,8 @@ class TestCallStack(object):
 
     @pytest.mark.usefixtures('predictable_call_ids')
     def test_rpc_call_stack(self, container, rpc_proxy):
-
+        """ RPC backoff extends call stack
+        """
         call_stacks = []
 
         def callback(worker_ctx, result, exc_info):
@@ -595,28 +640,28 @@ class TestCallStack(object):
             ],
             [
                 'standalone_rpc_proxy.call.0',
-                # 'service.method.1',
+                'service.method.1.backoff',
                 'service.method.2'
             ],
             [
                 'standalone_rpc_proxy.call.0',
-                # 'service.method.1',
-                # 'service.method.2',
+                'service.method.1.backoff',
+                'service.method.2.backoff',
                 'service.method.3',
             ],
             [
                 'standalone_rpc_proxy.call.0',
-                # 'service.method.1',
-                # 'service.method.2',
-                # 'service.method.3',
+                'service.method.1.backoff',
+                'service.method.2.backoff',
+                'service.method.3.backoff',
                 'service.method.4'
             ],
         ]
 
     @pytest.mark.usefixtures('predictable_call_ids')
-    @pytest.mark.xfail  # standalone event dispatcher does not include call_id
     def test_events_call_stack(self, container, dispatch_event):
-
+        """ Event handler backoff extends call stack
+        """
         call_stacks = []
 
         def callback(worker_ctx, result, exc_info):
@@ -625,39 +670,46 @@ class TestCallStack(object):
                 return True
 
         with entrypoint_waiter(container, 'method', callback=callback):
-            dispatch_event("src_service", "event_type", {})
+            dispatch_event(
+                "src_service",
+                "event_type",
+                {},
+                headers={
+                    'nameko.call_id_stack': ['event.dispatch']
+                }
+            )
 
         assert call_stacks == [
             [
-                'standalone_event.call.0',
+                'event.dispatch',
+                'service.method.0'
+            ],
+            [
+                'event.dispatch',
+                'service.method.0.backoff',
                 'service.method.1'
             ],
             [
-                'standalone_event.call.0',
-                # 'service.method.1',
-                'service.method.2'
+                'event.dispatch',
+                'service.method.0.backoff',
+                'service.method.1.backoff',
+                'service.method.2',
             ],
             [
-                'standalone_event.call.0',
-                # 'service.method.1',
-                # 'service.method.2',
-                'service.method.3',
-            ],
-            [
-                'standalone_event.call.0',
-                # 'service.method.1',
-                # 'service.method.2',
-                # 'service.method.3',
-                'service.method.4'
+                'event.dispatch',
+                'service.method.0.backoff',
+                'service.method.1.backoff',
+                'service.method.2.backoff',
+                'service.method.3'
             ],
         ]
 
     @pytest.mark.usefixtures('predictable_call_ids')
-    @pytest.mark.xfail  # predictable_call_ids not in play (unlike in RPC case)
     def test_messaging_call_stack(
         self, container, publish_message, exchange, queue
     ):
-
+        """ Message consumption backoff extends call stack
+        """
         call_stacks = []
 
         def callback(worker_ctx, result, exc_info):
@@ -671,32 +723,32 @@ class TestCallStack(object):
                 "msg",
                 routing_key=queue.routing_key,
                 headers={
-                    'call_id_stack': ['message.send.0']
+                    'nameko.call_id_stack': ['message.publish']
                 }
             )
 
         assert call_stacks == [
             [
-                'message.send.0',
+                'message.publish',
+                'service.method.0'
+            ],
+            [
+                'message.publish',
+                'service.method.0.backoff',
                 'service.method.1'
             ],
             [
-                'message.send.0',
-                # 'service.method.1',
-                'service.method.2'
+                'message.publish',
+                'service.method.0.backoff',
+                'service.method.1.backoff',
+                'service.method.2',
             ],
             [
-                'message.send.0',
-                # 'service.method.1',
-                # 'service.method.2',
-                'service.method.3',
-            ],
-            [
-                'message.send.0',
-                # 'service.method.1',
-                # 'service.method.2',
-                # 'service.method.3',
-                'service.method.4'
+                'message.publish',
+                'service.method.0.backoff',
+                'service.method.1.backoff',
+                'service.method.2.backoff',
+                'service.method.3'
             ],
         ]
 
@@ -726,6 +778,8 @@ class TestSerialization(object):
     def test_custom_serialization(
         self, container, publish_message, exchange, queue, wait_for_result
     ):
+        """ Backoff can be used with a custom AMQP message serializer
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_result
         ) as result:
@@ -775,7 +829,9 @@ class TestDeadLetteredMessages(object):
         self, container, publish_message, deadlettering_exchange,
         queue, exchange, wait_for_result, entrypoint_tracker, limited_backoff
     ):
-
+        """ Backoff can be used even if the original message has previously
+        been deadlettered
+        """
         with entrypoint_waiter(
             container, 'method', callback=wait_for_result
         ) as result:

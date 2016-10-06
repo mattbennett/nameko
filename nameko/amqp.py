@@ -12,7 +12,7 @@ from kombu.pools import connections, producers
 from kombu.transport.pyamqp import Transport
 
 from nameko.constants import AMQP_URI_CONFIG_KEY
-from nameko.extensions import Extension
+from nameko.extensions import SharedExtension
 
 BAD_CREDENTIALS = (
     'Error connecting to broker, probably caused by invalid credentials'
@@ -106,23 +106,21 @@ class Backoff(Exception):
         return expiration
 
 
-class BackoffPublisher(Extension):
+class BackoffPublisher(SharedExtension):
 
-    def get_backoff_exchange(self, message):
-
+    @property
+    def exchange(self):
         backoff_exchange = Exchange(
             type="topic",
             name="backoff"
         )
         return backoff_exchange
 
-    def get_backoff_queue(self, message):
-
-        backoff_exchange = self.get_backoff_exchange(message)
-
+    @property
+    def queue(self):
         backoff_queue = Queue(
             name="backoff",
-            exchange=backoff_exchange,
+            exchange=self.exchange,
             routing_key="#",
             queue_arguments={
                 'x-dead-letter-exchange': "",   # default exchange
@@ -132,19 +130,16 @@ class BackoffPublisher(Extension):
 
     def republish(self, backoff_cls, message, target_queue):
 
-        backoff_exchange = self.get_backoff_exchange(message)
-
         expiration = backoff_cls.get_next_expiration(
-            message, backoff_exchange.name
+            message, self.exchange.name
         )
 
         # republish to backoff queue
-        backoff_queue = self.get_backoff_queue(message)
         conn = Connection(self.container.config[AMQP_URI_CONFIG_KEY])
         with connections[conn].acquire(block=True) as connection:
 
-            maybe_declare(backoff_queue.exchange, connection)
-            maybe_declare(backoff_queue, connection)
+            maybe_declare(self.exchange, connection)
+            maybe_declare(self.queue, connection)
 
             with producers[conn].acquire(block=True) as producer:
 
@@ -154,7 +149,7 @@ class BackoffPublisher(Extension):
                 producer.publish(
                     message.body,
                     headers=headers,
-                    exchange=backoff_queue.exchange,
+                    exchange=self.exchange,
                     routing_key=target_queue,
                     expiration=expiration / 1000,
                     **properties
