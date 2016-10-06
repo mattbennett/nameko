@@ -65,9 +65,11 @@ class HeaderDecoder(object):
         return key
 
     def unpack_message_headers(self, worker_ctx_cls, message):
-        stripped = {self._strip_header_name(k): v
-                    for k, v in six.iteritems(message.headers)}
-        return worker_ctx_cls.get_context_data(stripped)
+        stripped = {
+            self._strip_header_name(k): v
+            for k, v in six.iteritems(message.headers)
+        }
+        return stripped
 
 
 class Publisher(DependencyProvider, HeaderEncoder):
@@ -197,7 +199,7 @@ class QueueConsumer(SharedExtension, ProviderCollector, ConsumerMixin):
             self._starting = True
 
             _log.debug('starting %s', self)
-            self._gt = self.container.spawn_managed_thread(self.run, self)
+            self._gt = self.container.spawn_managed_thread(self.run)
             self._gt.link(self._handle_thread_exited)
         try:
             _log.debug('waiting for consumer ready %s', self)

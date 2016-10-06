@@ -12,8 +12,8 @@ from nameko.rpc import RpcProxy, rpc
 from nameko.standalone.events import event_dispatcher
 from nameko.standalone.rpc import ServiceRpcProxy
 from nameko.testing.services import (
-    EntrypointWaiterTimeout, entrypoint_hook, entrypoint_waiter, once,
-    replace_dependencies, restrict_entrypoints, worker_factory)
+    entrypoint_hook, entrypoint_waiter, once, replace_dependencies,
+    restrict_entrypoints, worker_factory)
 from nameko.testing.utils import get_container
 
 
@@ -29,6 +29,19 @@ class LanguageReporter(DependencyProvider):
 handle_event = Mock()
 
 
+@pytest.fixture
+def counter():
+
+    class Counter(object):
+        value = 0
+
+        def count(self):
+            self.value += 1
+            return self.value
+
+    return Counter()
+
+
 @pytest.yield_fixture(autouse=True)
 def reset_mock():
     yield
@@ -41,6 +54,10 @@ def spawn_thread():
     threads = []
 
     def spawn(fn, *args):
+        """ Spawn a new thread to execute `fn(*args)`.
+
+        The thread will be killed at test teardown if it's still running.
+        """
         threads.append(eventlet.spawn(fn, *args))
 
     yield spawn
@@ -48,7 +65,7 @@ def spawn_thread():
     for gt in threads:
         try:
             gt.kill()
-        except:
+        except Exception:
             pass
 
 
@@ -218,7 +235,7 @@ def test_worker_factory():
         worker_factory(Service, nonexist=object())
 
 
-def test_replace_dependencies(container_factory, rabbit_config):
+def test_replace_dependencies_kwargs(container_factory, rabbit_config):
 
     class Service(object):
         name = "service"
@@ -230,9 +247,50 @@ def test_replace_dependencies(container_factory, rabbit_config):
         def method(self, arg):
             self.foo_proxy.remote_method(arg)
 
+    class FakeDependency(object):
+        def __init__(self):
+            self.processed = []
+
+        def remote_method(self, arg):
+            self.processed.append(arg)
+
+    container = container_factory(Service, rabbit_config)
+
+    # customise a single dependency
+    fake_foo_proxy = FakeDependency()
+    replace_dependencies(container, foo_proxy=fake_foo_proxy)
+    assert 2 == len([dependency for dependency in container.extensions
+                     if isinstance(dependency, RpcProxy)])
+
+    # customise multiple dependencies
+    res = replace_dependencies(container, bar_proxy=Mock(), baz_proxy=Mock())
+    assert list(res) == []
+
+    # verify that container.extensions doesn't include an RpcProxy anymore
+    assert all([not isinstance(dependency, RpcProxy)
+                for dependency in container.extensions])
+
+    container.start()
+
+    # verify that the fake dependency collected calls
+    msg = "msg"
+    with ServiceRpcProxy("service", rabbit_config) as service_proxy:
+        service_proxy.method(msg)
+
+    assert fake_foo_proxy.processed == [msg]
+
+
+def test_replace_dependencies_args(container_factory, rabbit_config):
+
+    class Service(object):
+        name = "service"
+        foo_proxy = RpcProxy("foo_service")
+        bar_proxy = RpcProxy("bar_service")
+        baz_proxy = RpcProxy("baz_service")
+
         @rpc
-        def foo(self):
-            return "bar"
+        def method(self, arg):
+            self.foo_proxy.remote_method(arg)
 
     container = container_factory(Service, rabbit_config)
 
@@ -255,6 +313,67 @@ def test_replace_dependencies(container_factory, rabbit_config):
         service_proxy.method(msg)
 
     foo_proxy.remote_method.assert_called_once_with(msg)
+
+
+def test_replace_dependencies_args_and_kwargs(container_factory,
+                                              rabbit_config):
+    class Service(object):
+        name = "service"
+        foo_proxy = RpcProxy("foo_service")
+        bar_proxy = RpcProxy("bar_service")
+        baz_proxy = RpcProxy("baz_service")
+
+        @rpc
+        def method(self, arg):
+            self.foo_proxy.remote_method(arg)
+            self.bar_proxy.bar()
+            self.baz_proxy.baz()
+
+    class FakeDependency(object):
+        def __init__(self):
+            self.processed = []
+
+        def remote_method(self, arg):
+            self.processed.append(arg)
+
+    container = container_factory(Service, rabbit_config)
+
+    fake_foo_proxy = FakeDependency()
+    mock_bar_proxy, mock_baz_proxy = replace_dependencies(
+        container, 'bar_proxy', 'baz_proxy', foo_proxy=fake_foo_proxy
+    )
+
+    # verify that container.extensions doesn't include an RpcProxy anymore
+    assert all([not isinstance(dependency, RpcProxy)
+                for dependency in container.extensions])
+
+    container.start()
+
+    # verify that the fake dependency collected calls
+    msg = "msg"
+    with ServiceRpcProxy("service", rabbit_config) as service_proxy:
+        service_proxy.method(msg)
+
+    assert fake_foo_proxy.processed == [msg]
+    assert mock_bar_proxy.bar.call_count == 1
+    assert mock_baz_proxy.baz.call_count == 1
+
+
+def test_replace_dependencies_in_both_args_and_kwargs_error(container_factory,
+                                                            rabbit_config):
+    class Service(object):
+        name = "service"
+        foo_proxy = RpcProxy("foo_service")
+        bar_proxy = RpcProxy("bar_service")
+        baz_proxy = RpcProxy("baz_service")
+
+    container = container_factory(Service, rabbit_config)
+
+    with pytest.raises(RuntimeError) as exc:
+        replace_dependencies(
+            container, 'bar_proxy', 'foo_proxy', foo_proxy='foo'
+        )
+    assert "Cannot replace the same dependency" in str(exc)
 
 
 def test_replace_non_dependency(container_factory, rabbit_config):
@@ -409,9 +528,7 @@ def test_entrypoint_waiter_with_callback(container_factory, rabbit_config):
 
     def cb(worker_ctx, res, exc_info):
         results.append((res, exc_info))
-        if len(results) == 2:
-            return True
-        return False
+        return len(results) == 2
 
     dispatch = event_dispatcher(rabbit_config)
     with entrypoint_waiter(container, 'handle_event', callback=cb):
@@ -438,8 +555,7 @@ def test_entrypoint_waiter_wait_for_specific_result(
     target = 5
 
     def cb(worker_ctx, res, exc_info):
-        if res == target:
-            return True
+        return res == target
 
     def increment_forever():
         dispatch = event_dispatcher(rabbit_config)
@@ -470,8 +586,7 @@ def test_entrypoint_waiter_wait_until_called_with_argument(
     target = 5
 
     def cb(worker_ctx, res, exc_info):
-        if worker_ctx.args == (target,):
-            return True
+        return worker_ctx.args == (target,)
 
     def increment_forever():
         dispatch = event_dispatcher(rabbit_config)
@@ -506,8 +621,7 @@ def test_entrypoint_waiter_wait_until_raises(
     container.start()
 
     def cb(worker_ctx, res, exc_info):
-        if exc_info is not None:
-            return True
+        return exc_info is not None
 
     def increment_forever():
         dispatch = event_dispatcher(rabbit_config)
@@ -543,8 +657,7 @@ def test_entrypoint_waiter_wait_until_stops_raising(
     container.start()
 
     def cb(worker_ctx, res, exc_info):
-        if exc_info is None:
-            return True
+        return exc_info is None
 
     def increment_forever():
         dispatch = event_dispatcher(rabbit_config)
@@ -562,11 +675,11 @@ def test_entrypoint_waiter_timeout(container_factory, rabbit_config):
     container = container_factory(Service, rabbit_config)
     container.start()
 
-    with pytest.raises(EntrypointWaiterTimeout) as exc_info:
+    with pytest.raises(entrypoint_waiter.Timeout) as exc_info:
         with entrypoint_waiter(container, 'handle', timeout=0.01):
             pass
     assert str(exc_info.value) == (
-        "EntrypointWaiterTimeout on service.handle after 0.01 seconds")
+        "Timeout on service.handle after 0.01 seconds")
 
 
 def test_entrypoint_waiter_bad_entrypoint(container_factory, rabbit_config):
@@ -622,3 +735,51 @@ def test_entrypoint_waiter_duplicate(container_factory, rabbit_config):
             dispatch('srcservice', 'eventtype', "msg")
 
     assert handle_event.call_args_list == [call("msg")]
+
+
+def test_entrypoint_waiter_result_teardown_race(
+    container_factory, rabbit_config, counter
+):
+    tracker = Mock()
+
+    class TrackingDependency(DependencyProvider):
+
+        def worker_result(self, worker_ctx, res, exc_info):
+            tracker.worker_result()
+
+        def worker_teardown(self, worker_ctx):
+            tracker.worker_teardown()
+
+    class Service(object):
+        name = "service"
+
+        tracker = TrackingDependency()
+
+        @event_handler('srcservice', 'eventtype')
+        def handle(self, msg):
+            tracker.handle(msg)
+
+    container = container_factory(Service, rabbit_config)
+    container.start()
+
+    def wait_for_two_calls(worker_ctx, res, exc_info):
+        return counter.count() > 1
+
+    dispatch = event_dispatcher(rabbit_config)
+    with entrypoint_waiter(container, 'handle', callback=wait_for_two_calls):
+
+        # dispatch the first message
+        dispatch('srcservice', 'eventtype', "msg")
+
+        # wait until teardown has fired at least once
+        while tracker.worker_teardown.call_count == 0:
+            time.sleep(.1)
+
+        # dispatch the second event
+        dispatch('srcservice', 'eventtype', "msg")
+
+    # we should wait for the second teardown to complete before exiting
+    # the entrypoint waiter
+    assert tracker.worker_teardown.call_count == 2
+    assert tracker.worker_result.call_count == 2
+    assert tracker.handle.call_count == 2

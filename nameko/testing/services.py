@@ -69,8 +69,9 @@ def entrypoint_hook(container, method_name, context_data=None):
                     hook_result.send_exception(exc)
 
         # If the container errors (e.g. due to a bad entrypoint), the
-        # entrypoint_waiter never completes. To mitigate, we exit the hook
-        # on the first greenthread to complete.
+        # entrypoint_waiter never completes. To mitigate, we also wait on
+        # the container, and if that throws we send the exception back
+        # as our result.
         eventlet.spawn_n(wait_for_entrypoint)
         eventlet.spawn_n(wait_for_container)
 
@@ -79,14 +80,10 @@ def entrypoint_hook(container, method_name, context_data=None):
     yield hook
 
 
-class EntrypointWaiterTimeout(Exception):
-    pass
-
-
 @contextmanager
 def entrypoint_waiter(container, method_name, timeout=30, callback=None):
-    """ Context manager that waits until an entrypoint has fired (and
-    completed).
+    """ Context manager that waits until an entrypoint has fired, and
+    the generated worker has exited and been torn down.
 
     It yields a :class:`nameko.testing.waiting.WaitResult` object that can be
     used to get the result returned (exception raised) by the entrypoint
@@ -103,6 +100,10 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
             Function to conditionally control whether the entrypoint_waiter
             should exit for a particular invocation
 
+    The `timeout` argument specifies the maximum number of seconds the
+    `entrypoint_waiter` should wait before exiting. It can be disabled by
+    passing `None`. The default is 30 seconds.
+
     Optionally allows a `callback` to be provided which is invoked whenever
     the entrypoint fires. If provided, the callback must return `True`
     for the `entrypoint_waiter` to exit. The signature for the callback
@@ -115,15 +116,10 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
 
         worker_ctx (WorkerContext): WorkerContext of the entrypoint call.
 
-        result (object): The result, if any, that the entrypoint returned.
+        result (object): The return value of the entrypoint.
 
         exc_info (tuple): Tuple as returned by `sys.exc_info` if the
             entrypoint raised an exception, otherwise `None`.
-
-
-    The `timeout` argument specifies the maximum number of seconds the
-    `entrypoint_waiter` should wait before exiting. It can be disabled by
-    passing `None`.
 
     **Usage**
 
@@ -164,8 +160,15 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
         raise RuntimeError("{} has no entrypoint `{}`".format(
             container.service_name, method_name))
 
+    class Result(WaitResult):
+        worker_ctx = None
+
+        def send(self, worker_ctx, result, exc_info):
+            self.worker_ctx = worker_ctx
+            super(Result, self).send(result, exc_info)
+
     waiter_callback = callback
-    waiter_result = WaitResult()
+    waiter_result = Result()
 
     def on_worker_result(worker_ctx, result, exc_info):
         complete = False
@@ -176,16 +179,16 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
                 complete = waiter_callback(worker_ctx, result, exc_info)
 
         if complete:
-            waiter_result.send(result, exc_info)
+            waiter_result.send(worker_ctx, result, exc_info)
         return complete
 
     def on_worker_teardown(worker_ctx):
-        if worker_ctx.entrypoint.method_name == method_name:
+        if waiter_result.worker_ctx is worker_ctx:
             return True
         return False
 
-    exc = EntrypointWaiterTimeout(
-        "EntrypointWaiterTimeout on {}.{} after {} seconds".format(
+    exc = entrypoint_waiter.Timeout(
+        "Timeout on {}.{} after {} seconds".format(
             container.service_name, method_name, timeout)
     )
 
@@ -199,6 +202,12 @@ def entrypoint_waiter(container, method_name, timeout=30, callback=None):
                 lambda args, kwargs, res, exc: on_worker_result(*args)
             ):
                 yield waiter_result
+
+
+class EntrypointWaiterTimeout(Exception):
+    pass
+
+entrypoint_waiter.Timeout = EntrypointWaiterTimeout
 
 
 def worker_factory(service_cls, **dependencies):
@@ -282,23 +291,56 @@ def worker_factory(service_cls, **dependencies):
 
 
 class MockDependencyProvider(DependencyProvider):
-    def __init__(self, attr_name):
+    def __init__(self, attr_name, dependency=None):
         self.attr_name = attr_name
-        self.dependency = MagicMock()
+        self.dependency = MagicMock() if dependency is None else dependency
 
     def get_dependency(self, worker_ctx):
         return self.dependency
 
 
-def replace_dependencies(container, *dependencies):
-    """ Replace the dependency providers on ``container`` with
-    :class:`MockDependencyProvider` objects if they are named in
-    ``dependencies``.
+def _replace_dependencies(container, **dependency_map):
+    if container.started:
+        raise RuntimeError('You must replace dependencies before the '
+                           'container is started.')
 
-    Return the :attr:`MockDependencyProvider.dependency` of the replacements,
-    so that calls to the replaced dependencies can be inspected. Return a
-    single object if only one dependency was replaced, and a generator
-    yielding the replacements in the same order as ``names`` otherwise.
+    dependency_names = {dep.attr_name for dep in container.dependencies}
+
+    missing = set(dependency_map) - dependency_names
+    if missing:
+        raise ExtensionNotFound("Dependency(s) '{}' not found on {}.".format(
+            missing, container))
+
+    existing_providers = {dep.attr_name: dep for dep in container.dependencies
+                          if dep.attr_name in dependency_map}
+
+    for name, replacement in dependency_map.items():
+        existing_provider = existing_providers[name]
+        replacement_provider = MockDependencyProvider(
+            name, dependency=replacement)
+        container.dependencies.remove(existing_provider)
+        container.dependencies.add(replacement_provider)
+
+
+def replace_dependencies(container, *dependencies, **dependency_map):
+    """ Replace the dependency providers on ``container`` with
+    instances of :class:`MockDependencyProvider`.
+
+    Dependencies named in *dependencies will be replaced with a
+    :class:`MockDependencyProvider`, which injects a MagicMock instead of the
+    dependency.
+
+    Alternatively, you may use keyword arguments to name a dependency and
+    provide the replacement value that the `MockDependencyProvider` should
+    inject.
+
+    Return the :attr:`MockDependencyProvider.dependency` for every dependency
+    specified in the (*dependencies) args so that calls to the replaced
+    dependencies can be inspected. Return a single object if only one
+    dependency was replaced, and a generator yielding the replacements in the
+    same order as ``dependencies`` otherwise.
+    Note that any replaced dependencies specified via kwargs `**dependency_map`
+    will not be returned.
 
     Replacements are made on the container instance and have no effect on the
     service class. New container instances are therefore unaffected by
@@ -325,43 +367,48 @@ def replace_dependencies(container, *dependencies):
                 return self.maths_rpc.divide(cms, 2.54)
 
         container = ServiceContainer(ConversionService, config)
-        maths_rpc = replace_dependencies(container, "maths_rpc")
+        mock_maths_rpc = replace_dependencies(container, "maths_rpc")
+        mock_maths_rpc.divide.return_value = 39.37
 
         container.start()
 
-        with ServiceRpcProxy('conversionservice', config) as proxy:
+        with ServiceRpcProxy('conversions', config) as proxy:
             proxy.cm_to_inches(100)
 
         # assert that the dependency was called as expected
-        maths_rpc.divide.assert_called_once_with(100, 2.54)
+        mock_maths_rpc.divide.assert_called_once_with(100, 2.54)
+
+
+    Providing a specific replacement by keyword:
+
+    ::
+
+        class StubMaths(object):
+
+            def divide(self, val1, val2):
+                return val1 / val2
+
+        replace_dependencies(container, maths_rpc=StubMaths())
+
+        container.start()
+
+        with ServiceRpcProxy('conversions', config) as proxy:
+            assert proxy.cm_to_inches(127) == 50.0
 
     """
-    if container.started:
-        raise RuntimeError('You must replace dependencies before the '
-                           'container is started.')
+    if set(dependencies).intersection(dependency_map):
+        raise RuntimeError(
+            "Cannot replace the same dependency via both args and kwargs.")
 
-    dependency_names = {dep.attr_name for dep in container.dependencies}
+    arg_replacements = OrderedDict((dep, MagicMock()) for dep in dependencies)
 
-    missing = set(dependencies) - dependency_names
-    if missing:
-        raise ExtensionNotFound("Dependency(s) '{}' not found on {}.".format(
-            missing, container))
-
-    replacements = OrderedDict()
-
-    named_dependencies = {dep.attr_name: dep for dep in container.dependencies
-                          if dep.attr_name in dependencies}
-    for name in dependencies:
-        dependency = named_dependencies[name]
-        replacement = MockDependencyProvider(name)
-        replacements[dependency] = replacement
-        container.dependencies.remove(dependency)
-        container.dependencies.add(replacement)
+    dependency_map.update(arg_replacements)
+    _replace_dependencies(container, **dependency_map)
 
     # if only one name was provided, return any replacement directly
     # otherwise return a generator
-    res = (replacement.dependency for replacement in replacements.values())
-    if len(dependencies) == 1:
+    res = (replacement for replacement in arg_replacements.values())
+    if len(arg_replacements) == 1:
         return next(res)
     return res
 
