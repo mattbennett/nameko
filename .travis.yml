@@ -9,7 +9,7 @@ services:
 addons:
   apt:
     sources:
-    - sourceline: 'deb https://packagecloud.io/rabbitmq-server/stable/ubuntu/precise main'
+    - sourceline: 'deb https://packagecloud.io/rabbitmq/rabbitmq-server/ubuntu/ precise main'
       key_url: 'https://packagecloud.io/gpg.key'
   apt_packages:
     - libenchant-dev
