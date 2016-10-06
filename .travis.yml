@@ -7,8 +7,13 @@ services:
     - rabbitmq
 
 addons:
+  apt:
+    sources:
+    - sourceline: 'deb https://packagecloud.io/rabbitmq-server/stable/ubuntu/precise main'
+      key_url: 'https://packagecloud.io/gpg.key'
   apt_packages:
     - libenchant-dev
+    - rabbitmq
 
 install:
   - pip install tox
