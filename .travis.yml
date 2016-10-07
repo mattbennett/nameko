@@ -12,6 +12,7 @@ addons:
     - rabbitmq-precise
   apt_packages:
     - libenchant-dev
+    - erlang-nox
     - rabbitmq-server
 
 install:
