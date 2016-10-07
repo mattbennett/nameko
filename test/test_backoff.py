@@ -93,29 +93,44 @@ def rpc_proxy(rabbit_config):
 def counter():
 
     class Counter(object):
-        value = 0
+        """ Counter with support for nested counts for hashable objects:
 
-        def count(self):
-            self.value += 1
-            return self.value
+        Usage::
 
-    return Counter()
+            counter = Counter()
+            counter.increment()  # 1
+            counter.increment()  # 2
+            counter == 2  # True
 
+            counter['foo'].increment()  # 1
+            counter['bar'].increment()  # 1
+            counter['foo'] == counter['bar'] == 1  # True
 
-@pytest.fixture
-def keyed_counter():
+        """
+        class Item(object):
+            def __init__(self):
+                self._value = 0
 
-    class Counter(object):
+            def increment(self):
+                self._value += 1
+                return self._value
+
+            def __eq__(self, other):
+                return self._value == other
+
+        sentinel = object()
 
         def __init__(self):
-            self.values = defaultdict(int)
+            self.items = defaultdict(Counter.Item)
 
         def __getitem__(self, key):
-            return self.values[key]
+            return self.items[key]
 
-        def count(self, key):
-            self.values[key] += 1
-            return self.values[key]
+        def increment(self):
+            return self[Counter.sentinel].increment()
+
+        def __eq__(self, other):
+            return self[Counter.sentinel] == other
 
     return Counter()
 
@@ -130,7 +145,7 @@ def service_cls(queue, counter):
         @consume(queue)
         @event_handler("src_service", "event_type")
         def method(self, payload):
-            if counter.count() <= BACKOFF_COUNT:
+            if counter.increment() <= BACKOFF_COUNT:
                 raise Backoff()
             return "result"
 
@@ -250,7 +265,7 @@ class TestRpc(object):
         )
 
     def test_multiple_services(
-        self, rpc_proxy, wait_for_result, keyed_counter,
+        self, rpc_proxy, wait_for_result, counter,
         container_factory, rabbit_config, entrypoint_tracker
     ):
         """ RPC backoff works correctly when multiple services use it
@@ -260,7 +275,7 @@ class TestRpc(object):
 
             @rpc
             def method(self, payload):
-                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                if counter["one"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "one"
 
@@ -269,7 +284,7 @@ class TestRpc(object):
 
             @rpc
             def method(self, payload):
-                if keyed_counter.count("two") <= BACKOFF_COUNT:
+                if counter["two"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "two"
 
@@ -286,7 +301,7 @@ class TestRpc(object):
         assert entrypoint_tracker.get_results() == (
             [None] * BACKOFF_COUNT + ["one"]
         )
-        assert keyed_counter['one'] == BACKOFF_COUNT + 1
+        assert counter['one'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(
             container_two, 'method', callback=wait_for_result
@@ -297,11 +312,11 @@ class TestRpc(object):
             [None] * BACKOFF_COUNT + ["one"] +
             [None] * BACKOFF_COUNT + ["two"]
         )
-        assert keyed_counter['two'] == BACKOFF_COUNT + 1
+        assert counter['two'] == BACKOFF_COUNT + 1
 
     def test_multiple_methods(
         self, container_factory, rabbit_config, wait_for_result, rpc_proxy,
-        entrypoint_tracker, keyed_counter
+        entrypoint_tracker, counter
     ):
         """ RPC backoff works correctly when multiple entrypoints in the same
         service use it
@@ -311,13 +326,13 @@ class TestRpc(object):
 
             @rpc
             def a(self):
-                if keyed_counter.count("a") <= BACKOFF_COUNT:
+                if counter["a"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "a"
 
             @rpc
             def b(self):
-                if keyed_counter.count("b") <= BACKOFF_COUNT:
+                if counter["b"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "b"
 
@@ -329,7 +344,7 @@ class TestRpc(object):
         assert entrypoint_tracker.get_results() == (
             [None] * BACKOFF_COUNT + ["a"]
         )
-        assert keyed_counter['a'] == BACKOFF_COUNT + 1
+        assert counter['a'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'b', callback=wait_for_result):
             rpc_proxy.service.b()
@@ -337,7 +352,7 @@ class TestRpc(object):
             [None] * BACKOFF_COUNT + ["a"] +
             [None] * BACKOFF_COUNT + ["b"]
         )
-        assert keyed_counter['b'] == BACKOFF_COUNT + 1
+        assert counter['b'] == BACKOFF_COUNT + 1
 
 
 class TestEvents(object):
@@ -388,7 +403,7 @@ class TestEvents(object):
 
     def test_multiple_services(
         self, dispatch_event, wait_for_result, container_factory,
-        rabbit_config, keyed_counter, entrypoint_tracker, rabbit_manager
+        rabbit_config, counter, entrypoint_tracker, rabbit_manager
     ):
         """ Event handler backoff works when multiple services use it
         """
@@ -397,7 +412,7 @@ class TestEvents(object):
 
             @event_handler("src_service", "event_type")
             def method(self, payload):
-                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                if counter["one"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "one"
 
@@ -406,7 +421,7 @@ class TestEvents(object):
 
             @event_handler("src_service", "event_type")
             def method(self, payload):
-                if keyed_counter.count("two") <= BACKOFF_COUNT:
+                if counter["two"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "two"
 
@@ -428,8 +443,8 @@ class TestEvents(object):
         assert result_one.get() == "one"
         assert result_two.get() == "two"
 
-        assert keyed_counter['one'] == BACKOFF_COUNT + 1
-        assert keyed_counter['two'] == BACKOFF_COUNT + 1
+        assert counter['one'] == BACKOFF_COUNT + 1
+        assert counter['two'] == BACKOFF_COUNT + 1
 
         results = entrypoint_tracker.get_results()
         # order not guaranteed
@@ -438,7 +453,7 @@ class TestEvents(object):
 
     def test_multiple_handlers(
         self, container_factory, rabbit_config, wait_for_result,
-        entrypoint_tracker, dispatch_event, keyed_counter
+        entrypoint_tracker, dispatch_event, counter
     ):
         """ Event handler backoff works when multiple entrypoints in the same
         service use it, including events with identical types originating from
@@ -449,19 +464,19 @@ class TestEvents(object):
 
             @event_handler("s1", "e1")
             def a(self, payload):
-                if keyed_counter.count("a") <= BACKOFF_COUNT:
+                if counter["a"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "a"
 
             @event_handler("s1", "e2")
             def b(self, payload):
-                if keyed_counter.count("b") <= BACKOFF_COUNT:
+                if counter["b"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "b"
 
             @event_handler("s2", "e1")
             def c(self, payload):
-                if keyed_counter.count("c") <= BACKOFF_COUNT:
+                if counter["c"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "c"
 
@@ -473,7 +488,7 @@ class TestEvents(object):
         assert entrypoint_tracker.get_results() == (
             [None] * BACKOFF_COUNT + ["a"]
         )
-        assert keyed_counter['a'] == BACKOFF_COUNT + 1
+        assert counter['a'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'b', callback=wait_for_result):
             dispatch_event('s1', 'e2', {})
@@ -481,7 +496,7 @@ class TestEvents(object):
             [None] * BACKOFF_COUNT + ["a"] +
             [None] * BACKOFF_COUNT + ["b"]
         )
-        assert keyed_counter['b'] == BACKOFF_COUNT + 1
+        assert counter['b'] == BACKOFF_COUNT + 1
 
         with entrypoint_waiter(container, 'c', callback=wait_for_result):
             dispatch_event('s2', 'e1', {})
@@ -490,7 +505,7 @@ class TestEvents(object):
             [None] * BACKOFF_COUNT + ["b"] +
             [None] * BACKOFF_COUNT + ["c"]
         )
-        assert keyed_counter['c'] == BACKOFF_COUNT + 1
+        assert counter['c'] == BACKOFF_COUNT + 1
 
 
 class TestMessaging(object):
@@ -543,7 +558,7 @@ class TestMessaging(object):
 
     def test_multiple_queues_with_same_exchange_and_routing_key(
         self, container_factory, wait_for_result, rabbit_manager, exchange,
-        entrypoint_tracker, publish_message, keyed_counter, rabbit_config
+        entrypoint_tracker, publish_message, counter, rabbit_config
     ):
         """ Message consumption backoff works when there are muliple queues
         receiving the published message
@@ -556,7 +571,7 @@ class TestMessaging(object):
 
             @consume(queue_one)
             def method(self, payload):
-                if keyed_counter.count("one") <= BACKOFF_COUNT:
+                if counter["one"].increment() <= BACKOFF_COUNT:
                     raise Backoff()
                 return "one"
 
@@ -565,7 +580,7 @@ class TestMessaging(object):
 
             @consume(queue_two)
             def method(self, payload):
-                keyed_counter.count("two")
+                counter["two"].increment()
                 return "two"
 
         container_one = container_factory(ServiceOne, rabbit_config)
@@ -596,8 +611,8 @@ class TestMessaging(object):
         assert result_two.get() == "two"
 
         # backoff from service_one not seen by service_two
-        assert keyed_counter['one'] == BACKOFF_COUNT + 1
-        assert keyed_counter['two'] == 1
+        assert counter['one'] == BACKOFF_COUNT + 1
+        assert counter['two'] == 1
 
 
 class TestCallStack(object):
