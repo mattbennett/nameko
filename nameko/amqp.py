@@ -69,7 +69,7 @@ class BackoffMeta(type):
 class Backoff(Exception):
 
     schedule = (1000, 2000, 3000, 5000, 8000, 13000, 21000, 34000, 55000)
-    randomness = 100  # standard deviation
+    randomness = 100  # standard deviation as milliseconds
     limit = 20
 
     class Expired(Exception):
