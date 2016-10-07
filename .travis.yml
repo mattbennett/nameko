@@ -12,7 +12,7 @@ addons:
     - rabbitmq-precise
   apt_packages:
     - libenchant-dev
-    - rabbitmq
+    - rabbitmq-server
 
 install:
   - pip install tox
