@@ -7,13 +7,8 @@ services:
     - rabbitmq
 
 addons:
-  apt:
-    sources:
-    - rabbitmq-precise
   apt_packages:
     - libenchant-dev
-    - erlang-nox
-    - rabbitmq-server
 
 install:
   - pip install tox
