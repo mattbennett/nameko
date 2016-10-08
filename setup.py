@@ -52,6 +52,7 @@ setup(
             "sphinx-nameko-theme==0.0.3",
         ],
         'examples': [
+            "arrow==0.8.0",
             "nameko-sqlalchemy==0.0.1"
         ]
     },

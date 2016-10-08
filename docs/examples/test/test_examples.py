@@ -24,7 +24,7 @@ def publisher(nameko_config, **kwargs):
         conn = Connection(nameko_config[AMQP_URI_CONFIG_KEY])
 
         with connections[conn].acquire(block=True) as connection:
-            if exchange is not None:
+            if exchange is not None:  # pragma: no cover
                 exchange.maybe_bind(connection)
             with producers[conn].acquire(block=True) as producer:
                 producer.publish(
