@@ -32,9 +32,9 @@ env:
   - TOX_ENV=pinned-lib
   - TOX_ENV=latest-lib
   - TOX_ENV=mastereventlet-lib
-  - TOX_ENV=branchcoverage-lib
+  - TOX_ENV=py34-branchcoverage-lib
   - TOX_ENV=examples
-  - TOX_ENV=docs
+  - TOX_ENV=py34-docs
 
 matrix:
   fast_finish: true
