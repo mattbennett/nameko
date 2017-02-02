@@ -10,7 +10,7 @@ from kombu.common import maybe_declare
 from kombu.compression import get_encoder
 from kombu.connection import Connection
 from kombu.serialization import registry
-from mock import Mock, call, patch
+from mock import Mock, call, patch, ANY
 from nameko.amqp import UndeliverableMessage, get_connection, get_producer
 from nameko.constants import AMQP_URI_CONFIG_KEY, HEARTBEAT_CONFIG_KEY
 from nameko.containers import WorkerContext
@@ -1043,6 +1043,31 @@ class TestPublisherOptions(object):
                 self.publish(*args, **kwargs)
 
         return Service
+
+    @patch('kombu.messaging.maybe_declare', wraps=maybe_declare)
+    def test_declare(
+        self, maybe_declare, container_factory, rabbit_config,
+        get_message_from_queue, exchange, queue, service_base, routing_key
+    ):
+        container = container_factory(service_base, rabbit_config)
+        container.start()
+
+        declare = [
+            Queue(name="q1", exchange=exchange, routing_key=routing_key),
+            Queue(name="q2", exchange=exchange, routing_key=routing_key)
+        ]
+
+        with entrypoint_hook(container, "proxy") as publish:
+            publish("payload", routing_key=routing_key, declare=declare)
+
+        assert maybe_declare.call_args_list == [
+            call(exchange, ANY, ANY),
+            call(declare[0], ANY, ANY),
+            call(declare[1], ANY, ANY)
+        ]
+
+        assert get_message_from_queue(declare[0].name).payload == "payload"
+        assert get_message_from_queue(declare[1].name).payload == "payload"
 
     @pytest.mark.parametrize("option,value,expected", [
         ('delivery_mode', 1, 1),
