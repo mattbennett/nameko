@@ -13,12 +13,10 @@ import eventlet
 import six
 from eventlet.event import Event
 from kombu import Connection
-from kombu.common import maybe_declare
 from kombu.mixins import ConsumerMixin
 from six.moves import queue as Queue
 
-from nameko.amqp import (
-    UndeliverableMessage, get_connection, get_producer, verify_amqp_uri)
+from nameko.amqp import UndeliverableMessage, get_producer, verify_amqp_uri
 from nameko.constants import (
     AMQP_URI_CONFIG_KEY, DEFAULT_HEARTBEAT, DEFAULT_RETRY_POLICY,
     DEFAULT_SERIALIZER, HEARTBEAT_CONFIG_KEY, SERIALIZER_CONFIG_KEY)
@@ -78,19 +76,23 @@ class Publisher(DependencyProvider, HeaderEncoder):
     def __init__(self, exchange=None, queue=None, **defaults):
         """ Provides an AMQP message publisher method via dependency injection.
 
-        In AMQP messages are published to *exchanges* and routed to bound
-        *queues*. This dependency accepts either an `exchange` or a bound
-        `queue`, and will ensure both are declared before publishing.
+        In AMQP, messages are published to *exchanges* and routed to bound
+        *queues*. This dependency accepts the `exchange` to publish to and
+        will ensure that it is declared before publishing.
+
+        Optionally, you may use the `declare` keyword argument to pass a list
+        of other :class:`kombu.Exchange` or :class:`kombu.Queue` objects to
+        declare before publishing.
 
         :Parameters:
             exchange : :class:`kombu.Exchange`
                 Destination exchange
             queue : :class:`kombu.Queue`
-                Bound queue. The event will be published to this queue's
-                exchange.
+                **Deprecated**: Bound queue. The event will be published to
+                this queue's exchange.
 
-        If neither `queue` nor `exchange` are provided, the message will be
-        published to the default exchange.
+        If `exchange` is not provided, the message will be published to the
+        default exchange.
 
         Example::
 
@@ -102,8 +104,22 @@ class Publisher(DependencyProvider, HeaderEncoder):
                     self.publish('spam:' + data)
         """
         self.exchange = exchange
-        self.queue = queue
         self.defaults = defaults
+        self.declare = self.defaults.pop('declare', [])
+
+        if queue is not None:
+            warnings.warn(
+                "The signature of `Publisher` has changed. The `queue` kwarg "
+                "is now deprecated. You can use the `declare` kwarg "
+                "to provide a list of Kombu queues to be declared. "
+                "See CHANGES, version 2.5.2 for more details. This warning "
+                "will be removed in version 2.7.0.",
+                DeprecationWarning
+            )
+            if exchange is None:
+                self.exchange = queue.exchange
+
+            self.declare.append(queue)
 
     @property
     def amqp_uri(self):
@@ -166,26 +182,15 @@ class Publisher(DependencyProvider, HeaderEncoder):
         return DEFAULT_RETRY_POLICY
 
     def setup(self):
-
-        exchange = self.exchange
-        queue = self.queue
+        if self.exchange is not None:
+            self.declare.append(self.exchange)
 
         verify_amqp_uri(self.amqp_uri)
-
-        with get_connection(self.amqp_uri) as conn:
-            if queue is not None:
-                maybe_declare(queue, conn)
-            elif exchange is not None:
-                maybe_declare(exchange, conn)
 
     def publish(self, propagating_headers, msg, **kwargs):
         """
         """
         exchange = self.exchange
-        queue = self.queue
-
-        if exchange is None and queue is not None:
-            exchange = queue.exchange
 
         # add any new headers to the existing ones we're propagating
         headers = propagating_headers.copy()
@@ -193,6 +198,9 @@ class Publisher(DependencyProvider, HeaderEncoder):
 
         retry = kwargs.pop('retry', self.retry)
         retry_policy = kwargs.pop('retry_policy', self.retry_policy)
+
+        declare = self.declare[:]
+        declare.extend(kwargs.pop('declare', ()))
 
         for key in self.delivery_options:
             if key not in kwargs:
@@ -212,6 +220,7 @@ class Publisher(DependencyProvider, HeaderEncoder):
                 retry=retry,
                 retry_policy=retry_policy,
                 mandatory=mandatory,
+                declare=declare,
                 **kwargs
             )
 

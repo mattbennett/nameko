@@ -31,12 +31,6 @@ CONSUME_TIMEOUT = 1
 
 
 @pytest.yield_fixture
-def patch_maybe_declare():
-    with patch('nameko.messaging.maybe_declare', autospec=True) as patched:
-        yield patched
-
-
-@pytest.yield_fixture
 def warnings():
     with patch('nameko.messaging.warnings') as patched:
         yield patched
@@ -106,7 +100,7 @@ def test_consume_provider(mock_container):
 
 @pytest.mark.usefixtures("predictable_call_ids")
 def test_publish_to_exchange(
-    patch_maybe_declare, mock_connection, mock_producer, mock_container
+    mock_connection, mock_producer, mock_container
 ):
     container = mock_container
     container.service_name = "srcservice"
@@ -115,10 +109,6 @@ def test_publish_to_exchange(
     worker_ctx = WorkerContext(container, service, DummyProvider("publish"))
 
     publisher = Publisher(exchange=foobar_ex).bind(container, "publish")
-
-    # test declarations
-    publisher.setup()
-    patch_maybe_declare.assert_called_once_with(foobar_ex, mock_connection)
 
     # test publish
     msg = "msg"
@@ -135,6 +125,7 @@ def test_publish_to_exchange(
         'headers': headers,
         'retry': publisher.retry,
         'retry_policy': publisher.retry_policy,
+        'declare': publisher.declare,
         'mandatory': False
     }
     expected_kwargs.update(publisher.delivery_options)
@@ -147,7 +138,7 @@ def test_publish_to_exchange(
 
 @pytest.mark.usefixtures("predictable_call_ids")
 def test_publish_to_queue(
-    patch_maybe_declare, mock_producer, mock_connection, mock_container
+    mock_producer, mock_connection, mock_container
 ):
     container = mock_container
     container.shared_extensions = {}
@@ -159,10 +150,6 @@ def test_publish_to_queue(
         container, service, DummyProvider("publish"), data=ctx_data)
 
     publisher = Publisher(queue=foobar_queue).bind(container, "publish")
-
-    # test declarations
-    publisher.setup()
-    patch_maybe_declare.assert_called_once_with(foobar_queue, mock_connection)
 
     # test publish
     msg = "msg"
@@ -180,6 +167,7 @@ def test_publish_to_queue(
         'headers': headers,
         'retry': publisher.retry,
         'retry_policy': publisher.retry_policy,
+        'declare': publisher.declare,
         'mandatory': False
     }
     expected_kwargs.update(publisher.delivery_options)
@@ -192,7 +180,7 @@ def test_publish_to_queue(
 
 @pytest.mark.usefixtures("predictable_call_ids")
 def test_publish_custom_headers(
-    mock_container, patch_maybe_declare, mock_producer, mock_connection
+    mock_container, mock_producer, mock_connection
 ):
 
     container = mock_container
@@ -205,10 +193,6 @@ def test_publish_custom_headers(
     )
 
     publisher = Publisher(queue=foobar_queue).bind(container, "publish")
-
-    # test declarations
-    publisher.setup()
-    patch_maybe_declare.assert_called_once_with(foobar_queue, mock_connection)
 
     # test publish
     msg = "msg"
@@ -225,6 +209,7 @@ def test_publish_custom_headers(
         'headers': headers,
         'retry': publisher.retry,
         'retry_policy': publisher.retry_policy,
+        'declare': publisher.declare,
         'mandatory': False
     }
     expected_kwargs.update(publisher.delivery_options)
@@ -305,10 +290,13 @@ def test_publish_to_rabbit(rabbit_manager, rabbit_config, mock_container):
     publisher = Publisher(
         exchange=foobar_ex, queue=foobar_queue).bind(container, "publish")
 
-    # test queue, exchange and binding created in rabbit
     publisher.setup()
     publisher.start()
 
+    service.publish = publisher.get_dependency(worker_ctx)
+    service.publish("msg")
+
+    # test queue, exchange and binding created in rabbit
     exchanges = rabbit_manager.get_exchanges(vhost)
     queues = rabbit_manager.get_queues(vhost)
     bindings = rabbit_manager.get_queue_bindings(vhost, foobar_queue.name)
@@ -318,8 +306,6 @@ def test_publish_to_rabbit(rabbit_manager, rabbit_config, mock_container):
     assert "foobar_ex" in [binding['source'] for binding in bindings]
 
     # test message published to queue
-    service.publish = publisher.get_dependency(worker_ctx)
-    service.publish("msg")
     messages = rabbit_manager.get_messages(vhost, foobar_queue.name)
     assert ['"msg"'] == [msg['payload'] for msg in messages]
 
