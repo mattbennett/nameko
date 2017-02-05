@@ -28,22 +28,29 @@ cache:
     - $HOME/.cache/pip
 
 env:
-  - TOX_ENV=oldest-lib
-  - TOX_ENV=pinned-lib
-  - TOX_ENV=latest-lib
-  - TOX_ENV=mastereventlet-lib
-  - TOX_ENV=branchcoverage-lib
-  - TOX_ENV=examples
-  - TOX_ENV=docs
+  - FACTOR=oldest
+  - FACTOR=pinned
+  - FACTOR=latest
+  - FACTOR=mastereventlet
 
 matrix:
   fast_finish: true
-  allow_failures:
-    - env: TOX_ENV=mastereventlet-lib
-    - env: TOX_ENV=branchcoverage-lib
+  include:
+    - python: 2.7
+      env: FACTOR=examples
+    - python: 3.4
+      env: FACTOR=examples
+    - python: 2.7
+      env: FACTOR=branchcoverage
+    - python: 3.4
+      env: FACTOR=branchcoverage
+    - python: 3.4
+      env: FACTOR=docs
 
-script:
-  - tox
+  allow_failures:
+    - env: FACTOR=mastereventlet
+    - python: 3.4
+      env: FACTOR=branchcoverage
 
 deploy:
   provider: pypi
