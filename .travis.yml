@@ -52,6 +52,9 @@ matrix:
     - python: 3.4
       env: FACTOR=branchcoverage
 
+script:
+  - tox
+
 deploy:
   provider: pypi
   user: onefinestay
