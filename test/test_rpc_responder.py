@@ -7,11 +7,13 @@ from nameko.rpc import Responder
 EXCEPTION_MODULE = Exception.__module__
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def unserializable():
-    def unserializable_inner():
-        pass  # pragma: no cover
-    yield unserializable_inner
+    class Outer(object):
+        class Inner(object):
+            pass
+
+    return Outer.Inner
 
 
 def test_responder(mock_producer):
