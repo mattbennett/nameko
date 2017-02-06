@@ -5,7 +5,7 @@ python:
   - "3.3"
   - "3.4"
   - "3.5"
-  - "3.6"  # broken
+  # - "3.6"  # broken
   - "pypy"
 
 services:
@@ -50,12 +50,6 @@ matrix:
     - env: FACTOR=mastereventlet
     - python: 3.4
       env: FACTOR=branchcoverage
-    - python: 3.6
-      env: FACTOR=oldest
-    - python: 3.6
-      env: FACTOR=pinned
-    - python: 3.6
-      env: FACTOR=latest
 
 script:
   - tox
