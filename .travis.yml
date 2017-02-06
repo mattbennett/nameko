@@ -41,8 +41,6 @@ matrix:
       env: FACTOR=examples
     - python: 3.4
       env: FACTOR=examples
-    - python: 2.7
-      env: FACTOR=branchcoverage
     - python: 3.4
       env: FACTOR=branchcoverage
     - python: 3.4
