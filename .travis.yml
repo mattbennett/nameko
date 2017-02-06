@@ -5,7 +5,8 @@ python:
   - "3.3"
   - "3.4"
   - "3.5"
-  - "3.6"
+  - "3.6"  # broken
+  - "pypy"
 
 services:
     - rabbitmq
@@ -51,6 +52,7 @@ matrix:
     - env: FACTOR=mastereventlet
     - python: 3.4
       env: FACTOR=branchcoverage
+    - python: 3.6
 
 script:
   - tox
