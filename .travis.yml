@@ -52,7 +52,7 @@ matrix:
     - python: 3.4
       env: FACTOR=branchcoverage
     - python: pypy3
-      env: latest
+      env: FACTOR=latest
 
 script:
   - tox
