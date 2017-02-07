@@ -87,7 +87,7 @@ def test_responder_unserializable_result(
     assert result is None
     # Different kombu versions return different exceptions, so
     # testing for the concrete exception is not feasible
-    assert exc_info == (ANY, ANY, ANY)
+    assert exc_info is not None
     assert exception_info_string in str(exc_info[1])
 
     # and publish a dictionary-serialized UnserializableValueError

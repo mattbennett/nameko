@@ -31,10 +31,11 @@ def test_any_instance_of():
     assert repr(AnyInstanceOf(str)) == "<AnyInstanceOf-str>"
     assert repr(AnyInstanceOf(Foo)) == "<AnyInstanceOf-Foo>"
 
-    assert AnyInstanceOf == AnyInstanceOf(type)
-    assert str == AnyInstanceOf(type)
-    assert int == AnyInstanceOf(type)
-    assert type == AnyInstanceOf(type)
+    # pypy-2.5.0 fails with this comparison unless you use yoda-conditions
+    assert AnyInstanceOf(type) == AnyInstanceOf
+    assert AnyInstanceOf(type) == str
+    assert AnyInstanceOf(type) == int
+    assert AnyInstanceOf(type) == type
 
 
 def test_wait_for_call():
