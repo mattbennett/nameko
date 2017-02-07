@@ -51,6 +51,8 @@ matrix:
     - env: FACTOR=mastereventlet
     - python: 3.4
       env: FACTOR=branchcoverage
+    - python: pypy3
+      env: latest
 
 script:
   - tox
