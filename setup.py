@@ -36,6 +36,7 @@ setup(
             "coverage==4.4.1",
             "flake8==3.3.0",
             "isort==4.2.15",
+            "flaky==3.4.0",
             "mccabe==0.6.1",
             "pycodestyle==2.3.1",
             "pyflakes==1.5.0",
