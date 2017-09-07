@@ -1,7 +1,7 @@
 import json
 
-import flaky
 import pytest
+from flaky import flaky
 from mock import patch
 from werkzeug.wrappers import Response
 
