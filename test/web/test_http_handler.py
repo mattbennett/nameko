@@ -9,7 +9,7 @@ from nameko.testing.utils import get_extension
 from nameko.web.handlers import HttpRequestHandler, http
 
 
-def port_already_in_use(err, *args):
+def port_already_in_use(err, *args):  # pragma: no cover
     return issubclass(err[0], OSError) and "already in use" in str(err[0])
 
 
