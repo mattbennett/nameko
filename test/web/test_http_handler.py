@@ -1,16 +1,11 @@
 import json
 
 import pytest
-from flaky import flaky
 from mock import patch
 from werkzeug.wrappers import Response
 
 from nameko.testing.utils import get_extension
 from nameko.web.handlers import HttpRequestHandler, http
-
-
-def port_already_in_use(err, *args):  # pragma: no cover
-    return issubclass(err[0], OSError) and "already in use" in str(err[0])
 
 
 class ExampleService(object):
@@ -57,7 +52,9 @@ class SimpleService(object):
 
 
 @pytest.fixture
-def web_session(container_factory, web_config, web_session):
+def web_session(
+    container_factory, web_config, web_session, retry_if_port_in_use
+):
     container = container_factory(ExampleService, web_config)
     container.start()
     return web_session
@@ -114,9 +111,9 @@ def test_bad_payload(web_session):
     assert "Error: TypeError: Payload must be a string. Got `23`" in rv.text
 
 
-@flaky(rerun_filter=port_already_in_use)
-def test_lifecycle(container_factory, web_config):
-
+def test_lifecycle(
+    container_factory, web_config, retry_if_port_in_use
+):
     container = container_factory(SimpleService, web_config)
 
     http = get_extension(container, HttpRequestHandler)
