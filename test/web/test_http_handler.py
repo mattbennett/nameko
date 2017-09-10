@@ -52,9 +52,7 @@ class SimpleService(object):
 
 
 @pytest.fixture
-def web_session(
-    container_factory, web_config, web_session, retry_if_port_in_use
-):
+def web_session(container_factory, web_config, web_session):
     container = container_factory(ExampleService, web_config)
     container.start()
     return web_session
@@ -111,9 +109,8 @@ def test_bad_payload(web_session):
     assert "Error: TypeError: Payload must be a string. Got `23`" in rv.text
 
 
-def test_lifecycle(
-    container_factory, web_config, retry_if_port_in_use
-):
+def test_lifecycle(container_factory, web_config):
+
     container = container_factory(SimpleService, web_config)
 
     http = get_extension(container, HttpRequestHandler)

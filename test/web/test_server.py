@@ -25,7 +25,6 @@ class ExampleService(object):
         return 'x' * (10**6)
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_broken_pipe(
     container_factory, web_config, web_config_port, web_session
 ):
@@ -42,7 +41,6 @@ def test_broken_pipe(
     assert web_session.get('/').text == ''
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_other_socket_error(
     container_factory, web_config, web_config_port, web_session
 ):
@@ -64,7 +62,6 @@ def test_other_socket_error(
     assert 'boom' in str(exc)
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_client_disconnect_os_error(
     container_factory, web_config, web_config_port, web_session
 ):
@@ -86,7 +83,6 @@ def test_client_disconnect_os_error(
     assert web_session.get('/').text == ''
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_other_os_error(
     container_factory, web_config, web_config_port, web_session
 ):
@@ -126,7 +122,6 @@ def test_parse_address(source, result):
         assert parse_address(source) == result
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_adding_middleware_with_get_wsgi_app(container_factory, web_config):
 
     class CustomWebServer(WebServer):
@@ -156,7 +151,6 @@ def test_adding_middleware_with_get_wsgi_app(container_factory, web_config):
     assert isinstance(wsgi_app, ProxyFix)
 
 
-@pytest.mark.usefixtures('retry_if_port_in_use')
 def test_custom_wsgi_server_is_used(
     container_factory, web_config, web_config_port, web_session
 ):

@@ -60,7 +60,7 @@ def get_message(ws):
 
 
 @pytest.yield_fixture
-def container(container_factory, web_config, retry_if_port_in_use):
+def container(container_factory, web_config):
     container = container_factory(ExampleService, web_config)
     container.start()
     yield container
