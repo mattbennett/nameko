@@ -96,7 +96,14 @@ class WebServer(ProviderCollector, SharedExtension):
     def start(self):
         if not self._starting:
             self._starting = True
-            self._sock = eventlet.listen(self.bind_addr)
+            try:
+                self._sock = eventlet.listen(self.bind_addr)
+            except Exception:
+                import subprocess
+                out = subprocess.check_output(['sudo', 'lsof', '-i'])
+                with open('/tmp/ports', 'a') as fh:
+                    fh.write('lsof: \n{}\n'.format(out))
+                raise
             self._serv = self.get_wsgi_server(self._sock, self.get_wsgi_app())
             self._gt = self.container.spawn_managed_thread(self.run)
 
