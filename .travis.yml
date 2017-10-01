@@ -29,6 +29,8 @@ cache:
 matrix:
   include:
     - python: 2.7
+      env: TOX_ENV=py27-pinned-debug
+    - python: 2.7
       env: TOX_ENV=py27-oldest-lib
     - python: 2.7
       env: TOX_ENV=py27-pinned-lib

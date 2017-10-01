@@ -321,7 +321,7 @@ def web_config(empty_config):
 
     port = find_free_port()
     with open('/tmp/ports', 'a') as fh:
-        fh.write('{}\n'.format(port))
+        fh.write('webconfig: {}\n'.format(port))
 
     cfg = empty_config
     cfg[WEB_SERVER_CONFIG_KEY] = str(port)

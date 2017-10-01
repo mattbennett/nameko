@@ -86,6 +86,8 @@ def toxiproxy(toxiproxy_server, rabbit_config):
     rabbit_port = uri.port
 
     proxy_port = find_free_port()
+    with open('/tmp/ports', 'a') as fh:
+        fh.write('toxiproxy: {}\n'.format(proxy_port))
 
     # create proxy
     proxy_name = "nameko_test_rabbitmq_{}".format(uuid.uuid4().hex)
