@@ -100,9 +100,12 @@ class WebServer(ProviderCollector, SharedExtension):
                 self._sock = eventlet.listen(self.bind_addr)
             except Exception:
                 import subprocess
-                out = subprocess.check_output(['sudo', 'lsof', '-i'])
-                with open('/tmp/ports', 'a') as fh:
-                    fh.write('lsof: \n{}\n'.format(out))
+                ps = subprocess.Popen(('sudo', 'netstat', '-tulpn'), stdout=subprocess.PIPE)
+                output = ps.communicate()[0]
+                for line in output.split('\n'):
+                    if str(self.bind_addr.port) in line:
+                        with open('/tmp/ports', 'a') as fh:
+                            fh.write('>>>: \n{}\n'.format(line))
                 raise
             self._serv = self.get_wsgi_server(self._sock, self.get_wsgi_app())
             self._gt = self.container.spawn_managed_thread(self.run)
