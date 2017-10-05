@@ -324,7 +324,7 @@ def web_config(empty_config):
         fh.write('webconfig: {}\n'.format(port))
 
     cfg = empty_config
-    cfg[WEB_SERVER_CONFIG_KEY] = str(port)
+    cfg[WEB_SERVER_CONFIG_KEY] = "127.0.0.1:{}".format(port)
     return cfg
 
 
