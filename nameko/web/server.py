@@ -100,7 +100,10 @@ class WebServer(ProviderCollector, SharedExtension):
                 self._sock = eventlet.listen(self.bind_addr)
             except Exception:
                 import subprocess
-                ps = subprocess.Popen(('sudo', 'netstat', '-tulpn'), stdout=subprocess.PIPE)
+                ps = subprocess.Popen(
+                    ('sudo', 'netstat', '-tulpn'),
+                    stdout=subprocess.PIPE
+                )
                 output = ps.communicate()[0]
                 for line in output.split('\n'):
                     if str(self.bind_addr.port) in line:
