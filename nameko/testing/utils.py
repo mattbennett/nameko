@@ -144,7 +144,6 @@ def reset_rabbit_connections(vhost, rabbit_manager):
 
 def find_free_port(host='127.0.0.1'):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((host, 0))
     port = sock.getsockname()[1]
     sock.close()
