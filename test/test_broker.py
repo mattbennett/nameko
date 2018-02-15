@@ -94,20 +94,6 @@ def disconnect_on_event(rabbit_manager, connection_name):
     disconnected.send(True)
 
 
-def test_idle_disconnect(container_factory, rabbit_manager, rabbit_config):
-    """ Break the connection to rabbit while a service is started but idle
-    (i.e. without active workers)
-    """
-    container = container_factory(ExampleService, rabbit_config)
-    container.start()
-
-    vhost = rabbit_config['vhost']
-    reset_rabbit_connections(vhost, rabbit_manager)
-
-    with ServiceRpcProxy('exampleservice', rabbit_config) as proxy:
-        assert proxy.echo("hello") == "hello"
-
-
 def test_proxy_disconnect_with_active_worker(
         container_factory, rabbit_manager, rabbit_config):
     """ Break the connection to rabbit while a service's queue consumer and
