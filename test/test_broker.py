@@ -149,52 +149,6 @@ def test_proxy_disconnect_with_active_worker(
     assert proxy_consumer_conn not in [conn['name'] for conn in connections]
 
 
-def test_service_disconnect_with_active_rpc_worker(
-        container_factory, rabbit_manager, rabbit_config):
-    """ Break the connection between a service's queue consumer and rabbit
-    while the service has an active rpc worker (i.e. response required).
-    """
-    container = container_factory(ExampleService, rabbit_config)
-    container.start()
-
-    # get the service's queue consumer connection while we know it's the
-    # only active connection
-    vhost = rabbit_config['vhost']
-    connections = get_rabbit_connections(vhost, rabbit_manager)
-    assert len(connections) == 1
-    queue_consumer_conn = connections[0]['name']
-
-    # create a standalone RPC proxy towards the target service
-    rpc_proxy = ServiceRpcProxy('exampleservice', rabbit_config)
-    proxy = rpc_proxy.start()
-
-    # there should now be two connections:
-    # 1. the queue consumer from the target service
-    # 2. the queue consumer in the standalone rpc proxy
-    connections = get_rabbit_connections(vhost, rabbit_manager)
-    assert len(connections) == 2
-
-    # disconnect the service's queue consumer while it's running a worker
-    eventlet.spawn(disconnect_on_event, rabbit_manager, queue_consumer_conn)
-
-    # we should receive the response from the first call
-    # the standalone RPC proxy will stop listening as soon as it receives
-    # a reply, so the duplicate response is discarded
-    arg = uuid.uuid4().hex
-    assert proxy.method(arg) == arg
-
-    # `method` will have been called twice with the same the `arg`, because
-    # rabbit will have redelivered the un-ack'd message from the first call
-    def method_called_twice():
-        assert method_called.call_args_list == [call(arg), call(arg)]
-    assert_stops_raising(method_called_twice)
-
-    connections = get_rabbit_connections(vhost, rabbit_manager)
-    assert queue_consumer_conn not in [conn['name'] for conn in connections]
-
-    rpc_proxy.stop()
-
-
 def test_service_disconnect_with_active_rpc_worker_via_service_proxy(
         logger, container_factory, rabbit_manager, rabbit_config):
     """ Break the connection between a service's queue consumer and rabbit
