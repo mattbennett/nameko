@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 
+import itertools
 import socket
 from contextlib import contextmanager
 
