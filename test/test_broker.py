@@ -149,39 +149,6 @@ def test_proxy_disconnect_with_active_worker(
     assert proxy_consumer_conn not in [conn['name'] for conn in connections]
 
 
-def test_service_disconnect_with_active_async_worker(
-        container_factory, rabbit_manager, rabbit_config):
-    """ Break the connection between a service's queue consumer and rabbit
-    while the service has an active async worker (e.g. event handler).
-    """
-    container = container_factory(ExampleService, rabbit_config)
-    container.start()
-
-    # get the service's queue consumer connection while we know it's the
-    # only active connection
-    vhost = rabbit_config['vhost']
-    connections = get_rabbit_connections(vhost, rabbit_manager)
-    assert len(connections) == 1
-    queue_consumer_conn = connections[0]['name']
-
-    # disconnect the service's queue consumer while it's running the worker
-    eventlet.spawn(disconnect_on_event, rabbit_manager, queue_consumer_conn)
-
-    # dispatch an event
-    data = uuid.uuid4().hex
-    dispatch = event_dispatcher(rabbit_config)
-    dispatch('srcservice', 'exampleevent', data)
-
-    # `handle` will have been called twice with the same the `data`, because
-    # rabbit will have redelivered the un-ack'd message from the first call
-    def event_handled_twice():
-        assert handle_called.call_args_list == [call(data), call(data)]
-    assert_stops_raising(event_handled_twice)
-
-    connections = get_rabbit_connections(vhost, rabbit_manager)
-    assert queue_consumer_conn not in [conn['name'] for conn in connections]
-
-
 def test_service_disconnect_with_active_rpc_worker(
         container_factory, rabbit_manager, rabbit_config):
     """ Break the connection between a service's queue consumer and rabbit

@@ -670,6 +670,56 @@ class TestConsumerDisconnections(object):
             publish(msg)
         assert result.get() == msg
 
+    def test_disconnect_with_active_worker(
+        self, container, publish, toxiproxy, lock, tracker
+    ):
+        """ Verify behaviour when we are disconnected while handling a worker.
+
+        This failure mode closes the socket between the consumer and the
+        rabbit broker.
+
+        Attempting to read from the closed socket raises a socket.error
+        and the connection is re-established.
+        """
+        queue_consumer = get_extension(container, QueueConsumer)
+
+        def reset(args, kwargs, result, exc_info):
+            toxiproxy.enable()
+            return True
+
+        msg = "foo"
+
+        # prevent workers from completing
+        lock.acquire()
+
+        with patch_wait(
+            queue_consumer, 'on_connection_error', callback=reset
+        ):
+
+            call_count = itertools.count(1)
+
+            # fire entrypoint and block the worker;
+            # break connection while the worker is active
+            with entrypoint_waiter(
+                container, 'echo', callback=lambda *_: next(call_count) >= 2
+            ) as result:
+                publish(msg)
+                while not lock._waiters:
+                    eventlet.sleep()
+                toxiproxy.disable()
+                lock.release()
+
+            assert result.get() == msg
+
+        # unack'd message will have been requeued on disconnection and
+        # therefore handled by the entrypoint twice
+        assert tracker.call_args_list == [call(msg), call(msg)]
+
+        # connection re-established
+        with entrypoint_waiter(container, 'echo') as result:
+            publish(msg)
+        assert result.get() == msg
+
     def test_message_ack_regression(
         self, container, publish, toxiproxy, lock, tracker
     ):
