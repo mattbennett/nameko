@@ -13,12 +13,12 @@ from eventlet.greenpool import GreenPool
 from greenlet import GreenletExit  # pylint: disable=E0611
 
 
+from nameko.exceptions import ConfigurationError, ContainerBeingKilled
 from nameko.constants import (
     CALL_ID_STACK_CONTEXT_KEY, DEFAULT_MAX_WORKERS,
     DEFAULT_PARENT_CALLS_TRACKED, MAX_WORKERS_CONFIG_KEY,
     PARENT_CALLS_CONFIG_KEY
 )
-from nameko.exceptions import ConfigurationError, ContainerBeingKilled
 from nameko.extensions import (
     ENTRYPOINT_EXTENSIONS_ATTR, is_dependency, iter_extensions
 )
