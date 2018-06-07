@@ -1,9 +1,9 @@
 from __future__ import absolute_import
 
-
-from contextlib import contextmanager
 import logging
 import time
+from contextlib import contextmanager
+
 
 def make_timing_logger(logger, precision=3, level=logging.DEBUG):
     """ Return a timing logger.
