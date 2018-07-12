@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 import os
+import sys
 from codecs import open
 
 from setuptools import find_packages, setup
@@ -9,10 +10,14 @@ here = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(here, 'README.rst'), 'r', 'utf-8') as handle:
     readme = handle.read()
 
+sys.path.append(os.path.join(os.path.dirname(__file__), 'nameko'))
+from version import __version__ as release_version  # flake8: noqa
+sys.path.pop()
+
 
 setup(
     name='nameko',
-    version='2.9.1-rc0',
+    version=release_version,
     description='A microservices framework for Python that lets service '
                 'developers concentrate on application logic and encourages '
                 'testability.',
