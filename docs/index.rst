@@ -1,91 +1,32 @@
-:orphan:
+.. Nameko documentation master file, created by
+   sphinx-quickstart on Sun Jul 14 12:21:50 2019.
+   You can adapt this file completely to your liking, but it should at least
+   contain the root `toctree` directive.
 
-Nameko
-======
-
-*[nah-meh-koh]*
-
-.. pull-quote ::
-
-    A microservices framework for Python that lets service developers concentrate on application logic and encourages testability.
-
-A nameko service is just a class:
-
-.. code-block:: python
-
-    # helloworld.py
-
-    from nameko.rpc import rpc
-
-    class GreetingService:
-        name = "greeting_service"
-
-        @rpc
-        def hello(self, name):
-            return "Hello, {}!".format(name)
-
-.. note::
-    The example above requires `RabbitMQ <https://www.rabbitmq.com>`_, because
-    it's using the built-in AMQP RPC features. `RabbitMQ installation guidelines <https://www.rabbitmq.com/download.html>`_
-    offer several installation options, but you can quickly install and run it
-    using `Docker <https://docs.docker.com/install/>`_.
-
-    To install and run RabbitMQ using docker:
-
-    .. code-block:: shell
-
-       $ docker run -d -p 5672:5672 rabbitmq:3
-
-    | *You might need to use sudo to do that.*
-
-You can run it in a shell:
-
-.. code-block:: shell
-
-    $ nameko run helloworld
-    starting services: greeting_service
-    ...
-
-And play with it from another:
-
-.. code-block:: pycon
-
-    $ nameko shell
-    >>> n.rpc.greeting_service.hello(name="ナメコ")
-    'Hello, ナメコ!'
-
-
-
-User Guide
-----------
-
-This section covers most things you need to know to create and run your own Nameko services.
+Welcome to Nameko's documentation!
+==================================
 
 .. toctree::
    :maxdepth: 2
+   :caption: Contents:
 
-   what_is_nameko
+   introduction
    key_concepts
    installation
-   cli
+   upgrading_from_v2
+   running_nameko_services
+   best_practices
    built_in_extensions
    community_extensions
-   testing
+   concurrency
+   testing_nameko_services
    writing_extensions
-
-
-
-More Information
-----------------
-
-.. toctree::
-   :maxdepth: 2
-
-   about_microservices
-   dependency_injection_benefits
-   similar_projects
-   getting_in_touch
+   support
    contributing
-   license
-   release_notes
-   api
+
+Indices and tables
+==================
+
+* :ref:`genindex`
+* :ref:`modindex`
+* :ref:`search`

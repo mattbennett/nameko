@@ -1,7 +1,8 @@
 .coverage
 *.pyc
 _py_cache
-docs/build
+_docs/build
+docs/_build
 certs
 
 ## Packages

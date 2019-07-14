@@ -30,10 +30,10 @@ test_examples:
 test_docs: docs spelling #linkcheck
 
 docs:
-	sphinx-build -n -b html -d docs/build/doctrees docs docs/build/html
+	sphinx-build -n -b html -d docs/_build/doctrees docs docs/_build/html
 
 spelling:
-	sphinx-build -b spelling -d docs/build/doctrees docs docs/build/spelling
+	sphinx-build -b spelling -d docs/_build/doctrees docs docs/_build/spelling
 
 linkcheck:
-	sphinx-build -W -b linkcheck -d docs/build/doctrees docs docs/build/linkcheck
+	sphinx-build -W -b linkcheck -d docs/_build/doctrees docs docs/_build/linkcheck
