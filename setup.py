@@ -57,9 +57,9 @@ setup(
         ],
         'docs': [
             "pyenchant==1.6.11",
-            "Sphinx==1.8.5",
+            "Sphinx==2.2.0",
             "sphinxcontrib-spelling==4.2.1",
-            "sphinx-nameko-theme==0.0.3",
+            "sphinx_rtd_theme@ git+https://github.com/nameko/sphinx_rtd_theme.git@nameko#egg=sphinx_rtd_theme"
         ],
         'examples': [
             "nameko-sqlalchemy==0.0.1",

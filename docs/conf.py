@@ -49,7 +49,6 @@ html_theme_options = {
     'display_version': False,
     'prev_next_buttons_location': 'bottom',
     'style_external_links': False,
-    'vcs_pageview_mode': '',
     'style_nav_header_background': '#573EB6',
     # Toc options
     'collapse_navigation': True,
@@ -72,4 +71,4 @@ html_theme = 'sphinx_rtd_theme'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-html_logo = 'nameko.png'
+html_logo = '_static/nameko.png'
